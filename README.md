@@ -81,14 +81,18 @@ The driver drives the chip's PowerVR SGX535 2D engine and offers the screen to
 screen copy, rectangle fill and invert hooks. A copy measures about 13 times
 faster than the same copy done by the CPU on a VAIO P.
 
-Haiku's app_server, however, does not call those hooks: its
-`AccelerantHWInterface` has no code left that uses them, and every copy is done
-with the CPU. So on a stock Haiku the hooks are present but idle.
+Haiku's app_server never calls those hooks, and that is not something a driver
+can fix. `AccelerantHWInterface` always allocates a back buffer in main memory,
+so app_server composes each frame there and pushes finished rectangles to the
+screen - it never copies inside the frame buffer, which is the one thing the
+blit hook could take over. Measured on a VAIO P, an 800x500 window-drag step
+costs 2.4 ms inside the back buffer plus 1.6 ms to push out, against 4.1 ms for
+the same copy on the engine, so the cached-memory path is already the faster
+one.
 
-The [Sony VAIO P patch set](https://github.com/rainygirl/haiku-sony-vaio-p-patch)
-includes a small app_server change that lets `DrawingEngine::CopyRect` use the
-accelerant's blit hook, which is where the speed-up actually shows. Nothing
-else is needed to install this driver.
+The hooks are kept because they are correct and cost nothing, and because
+anything that drives this accelerant directly can use them. See
+[AGENTS.md](AGENTS.md) for the full measurements.
 
 ## What this driver does not do
 

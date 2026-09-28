@@ -193,22 +193,45 @@ fill/blit/invert 를 다 붙이고 accelerant 를 올린 뒤, 창을 여덟 번 
 app_server 소스를 보면 이유가 분명하다. `AccelerantHWInterface` 에는
 `B_SCREEN_TO_SCREEN_BLIT` 도 `B_FILL_RECTANGLE` 도 `B_ACQUIRE_ENGINE` 도
 나오지 않는다. 이 훅들이 남아 있는 곳은 `DWindowHWInterface`, 즉 app_server 를
-창 안에서 돌리는 시험용 하니스뿐이다. 실제 경로는
-`DrawingEngine::CopyRegion` -> `CopyRect()` -> CPU `memcpy` 다.
+창 안에서 돌리는 시험용 하니스뿐이다.
 
-그 CPU 복사가 얼마나 비싼지 쟀다(`tools/bench2d.c`, 800x500 구역 20 회):
+여기서 한 번 틀렸다. 남은 경로가 `DrawingEngine::CopyRegion` -> `CopyRect()` ->
+CPU `memcpy` 이길래, 프레임버퍼 안에서의 복사를 CPU 와 2D 엔진으로 나란히 재고
+(`tools/bench2d.c`, 800x500 구역 20 회) 12.9 배 차이를 근거로 app_server 를 고쳤다.
 
-    CPU memcpy   한 번 52.8 ms   초당 18 회
-    SGX 2D 블릿  한 번  4.1 ms   초당 243 회
+    프레임버퍼 안 CPU memcpy   한 번 52.8 ms
+    SGX 2D 블릿                한 번  4.1 ms
 
-12.9 배다. 프레임버퍼를 write-combining 으로 잡아 둔 탓도 크다. 쓰기는 빨라졌지만
-읽기는 캐시를 타지 못하므로, 화면에서 화면으로 옮기는 복사가 유독 비싸다.
+`HWInterface::AcceleratedCopyRect()` 를 기본값 false 인 가상 함수로 두고,
+`AccelerantHWInterface` 가 블릿 훅으로 구현하고, `DrawingEngine::CopyRect` 가
+CPU 복사 전에 먼저 시도하게 했다. 빌드해서 실기기에 올렸다. 완료 카운터는
+그대로 0 이었다.
 
-그래서 [VAIO P 패치](https://github.com/rainygirl/haiku-sony-vaio-p-patch) 쪽에
-`DrawingEngine::CopyRect` 가 accelerant 의 블릿 훅을 먼저 시도하도록 하는 수정을
-넣었다. `HWInterface::AcceleratedCopyRect` 가 기본값 false 를 돌려주므로 다른
-드라이버는 영향을 받지 않고, `AccelerantHWInterface` 만 훅이 있을 때 true 를
-돌려준다. 패키지로만 설치한 경우에는 훅이 준비만 되어 있고 불리지는 않는다.
+### 이유: app_server 는 프레임버퍼 안에서 복사하지 않는다
+
+`AccelerantHWInterface::SetMode()` 는 **언제나** `MallocBuffer` 백버퍼를 만든다.
+조건이
+
+    if (!fBackBuffer.IsSet() || ... )
+
+라 첫 호출에 참이고, 이를 해제하는 곳이 어디에도 없다. 업스트림 Haiku 도 같다.
+그러니 app_server 는 모든 그리기를 주 메모리에서 끝내고 더러워진 사각형만
+화면으로 밀어 넣는다. 프레임버퍼 안에서의 복사 - 블릿 훅이 대신할 수 있는 유일한
+동작 - 를 아예 하지 않는다. 내가 잰 52.8 ms 는 app_server 가 하지 않는 일이었다.
+
+실제로 하는 일을 다시 쟀다(`tools/bench3.c`, 같은 구역):
+
+    백버퍼 안 복사 (CopyRect)         한 번 2.4 ms
+    백버퍼 -> 화면 (_CopyBackToFront)  한 번 1.6 ms
+    합계                              한 번 4.0 ms
+
+2D 엔진의 4.1 ms 와 같거나 그보다 빠르다. 캐시가 도는 메모리에서 하기 때문이다.
+`_CopyBackToFront` 를 엔진에 맡길 수도 없다. 출발지가 malloc 메모리라 엔진이
+읽을 주소가 아니다. 백버퍼를 스톨른 메모리로 옮기면 주소는 풀리지만 Painter 의
+블렌딩 읽기와 캐시 일관성이 새 문제가 된다.
+
+그래서 app_server 수정은 패치에서 다시 뺐다. 훅 자체는 남긴다. 구현이 올바르고,
+비용이 없고, accelerant 를 직접 부르는 쪽에서는 쓸 수 있다.
 
 ## 실기기에서 확인된 것
 

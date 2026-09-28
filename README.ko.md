@@ -81,14 +81,17 @@ make uninstall
 사각형 채우기·반전 훅을 제공합니다. VAIO P에서 잰 결과 복사는 CPU가 같은 일을
 할 때보다 약 13배 빠릅니다.
 
-다만 Haiku의 app_server는 이 훅들을 호출하지 않습니다. `AccelerantHWInterface`에
-훅을 쓰는 코드가 남아 있지 않고, 모든 복사를 CPU로 합니다. 그래서 순정 Haiku에서는
-훅이 준비만 되어 있고 실제로 불리지는 않습니다.
+다만 Haiku의 app_server는 이 훅들을 호출하지 않으며, 이는 드라이버가 고칠 수 있는
+문제가 아닙니다. `AccelerantHWInterface`는 언제나 주 메모리에 백버퍼를 잡습니다.
+app_server는 각 프레임을 거기서 합성한 뒤 완성된 사각형만 화면으로 밀어 넣으므로,
+블릿 훅이 대신할 수 있는 유일한 동작인 프레임버퍼 안에서의 복사를 아예 하지
+않습니다. VAIO P에서 재 보면 800x500 창 끌기 한 걸음은 백버퍼 안 복사 2.4 ms에
+화면으로 밀어넣기 1.6 ms이고, 같은 복사를 2D 엔진으로 하면 4.1 ms입니다. 캐시가
+도는 쪽이 이미 더 빠릅니다.
 
-[Sony VAIO P 패치 묶음](https://github.com/rainygirl/haiku-sony-vaio-p-patch)에는
-`DrawingEngine::CopyRect`가 accelerant의 블릿 훅을 쓰도록 하는 작은 app_server
-수정이 들어 있으며, 속도 차이는 그쪽에서 드러납니다. 이 드라이버를 설치하는 데
-그 패치가 필요하지는 않습니다.
+그래도 훅을 남겨 둔 것은 구현이 올바르고 비용이 들지 않으며, 이 accelerant를 직접
+부르는 쪽에서는 쓸 수 있기 때문입니다. 측정값 전체는 [AGENTS.md](AGENTS.md)에
+있습니다.
 
 ## 이 드라이버가 하지 않는 일
 
