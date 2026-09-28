@@ -32,6 +32,7 @@ static poulsbo_shared_info* sShared = NULL;
 static uint8* sRegisters = NULL;
 static uint8* sFramebuffer = NULL;
 static uint8* sCursor = NULL;
+static engine_token sEngineToken = { 1, B_2D_ACCELERATION, NULL };
 static uint16 sHotX = 0;
 static uint16 sHotY = 0;
 static bool sCursorVisible = false;
@@ -41,6 +42,63 @@ static void
 write32(uint32 offset, uint32 value)
 {
 	*(volatile uint32*)(sRegisters + offset) = value;
+}
+
+
+static uint32
+sgx_read(uint32 offset)
+{
+	return *(volatile uint32*)(sRegisters + PSB_SGX_OFFSET + offset);
+}
+
+
+static void
+sgx_write(uint32 offset, uint32 value)
+{
+	*(volatile uint32*)(sRegisters + PSB_SGX_OFFSET + offset) = value;
+}
+
+
+/* 명령을 2D 슬레이브 포트에 밀어 넣는다. FIFO 가 빌 때까지 기다리되 무한히
+   돌지는 않는다 - 엔진이 응답하지 않으면 그냥 포기한다. app_server 를 붙잡고
+   있는 것보다 그림 한 번 빠지는 편이 낫다. */
+static void
+submit_2d(const uint32* commands, int count)
+{
+	int spin;
+	int i;
+
+	for (spin = 0; spin < 100000; spin++) {
+		if ((int)(sgx_read(PSB_CR_2D_SOCIF) & PSB_C2_SOCIF_FREESPACE_MASK)
+				>= count)
+			break;
+	}
+	for (i = 0; i < count; i++)
+		sgx_write(PSB_SGX_2D_SLAVE_PORT + i * 4, commands[i]);
+	(void)sgx_read(PSB_SGX_2D_SLAVE_PORT + (count - 1) * 4);
+}
+
+
+static void
+fill_rect_2d(uint16 left, uint16 top, uint16 right, uint16 bottom,
+	uint32 colour, uint32 rop)
+{
+	uint32 commands[8];
+
+	if (right < left || bottom < top)
+		return;
+
+	commands[0] = PSB_2D_FENCE_BH;
+	commands[1] = PSB_2D_DST_SURF_BH | PSB_2D_DST_8888ARGB
+		| sShared->bytes_per_row;
+	commands[2] = 0;
+	commands[3] = PSB_2D_BLIT_BH | rop;
+	commands[4] = colour;
+	commands[5] = ((uint32)left << PSB_2D_XSTART_SHIFT) | top;
+	commands[6] = ((uint32)(right - left + 1) << PSB_2D_XSIZE_SHIFT)
+		| (uint32)(bottom - top + 1);
+	commands[7] = PSB_2D_FLUSH_BH;
+	submit_2d(commands, 8);
 }
 
 
@@ -111,6 +169,11 @@ poulsbo_init_accelerant(int fd)
 		return status;
 	sCursorVisible = false;
 	arm_cursor();
+
+	/* 2D 엔진의 주소 기준. 리눅스는 여기에 GTT 창 주소를 넣지만 이 기기에서는
+	   프레임버퍼의 물리 주소여야 실제로 그려진다 - poulsbo.h 의 설명 참고. */
+	sgx_write(PSB_CR_BIF_TWOD_REQ_BASE, sShared->framebuffer_physical);
+	(void)sgx_read(PSB_CR_BIF_TWOD_REQ_BASE);
 	return B_OK;
 }
 
@@ -332,6 +395,142 @@ poulsbo_set_cursor_shape(uint16 width, uint16 height, uint16 hotX,
 }
 
 
+static uint32
+poulsbo_accelerant_engine_count(void)
+{
+	return 1;
+}
+
+
+static void
+poulsbo_wait_engine_idle(void)
+{
+	int spin;
+	for (spin = 0; spin < 1000000; spin++) {
+		if ((sgx_read(PSB_CR_2D_BLIT_STATUS) & PSB_C2B_STATUS_BUSY) == 0)
+			return;
+	}
+}
+
+
+static status_t
+poulsbo_sync_to_token(sync_token* token)
+{
+	/* 하드웨어가 주는 것은 "완료한 블릿 수"와 busy 비트뿐이라, 토큰별로
+	   기다리는 대신 엔진이 놀 때까지 기다린다. 보수적이지만 틀리지 않는다. */
+	poulsbo_wait_engine_idle();
+	return B_OK;
+}
+
+
+static status_t
+poulsbo_get_sync_token(engine_token* engineToken, sync_token* token)
+{
+	token->engine_id = engineToken->engine_id;
+	token->counter = sgx_read(PSB_CR_2D_BLIT_STATUS) & 0x00ffffff;
+	return B_OK;
+}
+
+
+static status_t
+poulsbo_acquire_engine(uint32 capabilities, uint32 maxWait, sync_token* token,
+	engine_token** _engineToken)
+{
+	if (token != NULL)
+		poulsbo_sync_to_token(token);
+	*_engineToken = &sEngineToken;
+	return B_OK;
+}
+
+
+static status_t
+poulsbo_release_engine(engine_token* engineToken, sync_token* token)
+{
+	if (token != NULL)
+		poulsbo_get_sync_token(engineToken, token);
+	return B_OK;
+}
+
+
+static void
+poulsbo_screen_to_screen_blit(engine_token* engineToken, blit_params* list,
+	uint32 count)
+{
+	uint32 commands[10];
+	uint32 index;
+
+	for (index = 0; index < count; index++) {
+		blit_params* p = &list[index];
+		uint16 width = p->width + 1;
+		uint16 height = p->height + 1;
+		uint16 sourceX = p->src_left;
+		uint16 sourceY = p->src_top;
+		uint16 destX = p->dest_left;
+		uint16 destY = p->dest_top;
+		uint32 direction;
+
+		/* 겹치는 복사는 방향을 맞춰야 자기 꼬리를 밟지 않는다. */
+		if ((int)sourceX - (int)destX < 0) {
+			direction = ((int)sourceY - (int)destY < 0)
+				? PSB_2D_COPYORDER_BR2TL : PSB_2D_COPYORDER_TR2BL;
+		} else {
+			direction = ((int)sourceY - (int)destY < 0)
+				? PSB_2D_COPYORDER_BL2TR : PSB_2D_COPYORDER_TL2BR;
+		}
+		if (direction == PSB_2D_COPYORDER_BR2TL
+			|| direction == PSB_2D_COPYORDER_TR2BL) {
+			sourceX += width - 1;
+			destX += width - 1;
+		}
+		if (direction == PSB_2D_COPYORDER_BR2TL
+			|| direction == PSB_2D_COPYORDER_BL2TR) {
+			sourceY += height - 1;
+			destY += height - 1;
+		}
+
+		commands[0] = PSB_2D_FENCE_BH;
+		commands[1] = PSB_2D_DST_SURF_BH | PSB_2D_DST_8888ARGB
+			| sShared->bytes_per_row;
+		commands[2] = 0;
+		commands[3] = PSB_2D_SRC_SURF_BH | PSB_2D_SRC_8888ARGB
+			| sShared->bytes_per_row;
+		commands[4] = 0;
+		commands[5] = PSB_2D_SRC_OFF_BH
+			| ((uint32)sourceX << PSB_2D_XSTART_SHIFT) | sourceY;
+		commands[6] = PSB_2D_BLIT_BH | PSB_2D_USE_PAT | PSB_2D_ROP3_SRCCOPY
+			| direction;
+		commands[7] = ((uint32)destX << PSB_2D_XSTART_SHIFT) | destY;
+		commands[8] = ((uint32)width << PSB_2D_XSIZE_SHIFT) | height;
+		commands[9] = PSB_2D_FLUSH_BH;
+		submit_2d(commands, 10);
+	}
+}
+
+
+static void
+poulsbo_fill_rectangle(engine_token* engineToken, uint32 colour,
+	fill_rect_params* list, uint32 count)
+{
+	uint32 index;
+	for (index = 0; index < count; index++) {
+		fill_rect_2d(list[index].left, list[index].top, list[index].right,
+			list[index].bottom, colour, PSB_2D_ROP3_PATCOPY);
+	}
+}
+
+
+static void
+poulsbo_invert_rectangle(engine_token* engineToken, fill_rect_params* list,
+	uint32 count)
+{
+	uint32 index;
+	for (index = 0; index < count; index++) {
+		fill_rect_2d(list[index].left, list[index].top, list[index].right,
+			list[index].bottom, 0, PSB_2D_ROP3_DSTINVERT);
+	}
+}
+
+
 void*
 get_accelerant_hook(uint32 feature, void* data)
 {
@@ -379,6 +578,26 @@ get_accelerant_hook(uint32 feature, void* data)
 			return (void*)poulsbo_set_cursor_bitmap;
 		case B_SET_CURSOR_SHAPE:
 			return (void*)poulsbo_set_cursor_shape;
+
+		case B_ACCELERANT_ENGINE_COUNT:
+			return (void*)poulsbo_accelerant_engine_count;
+		case B_ACQUIRE_ENGINE:
+			return (void*)poulsbo_acquire_engine;
+		case B_RELEASE_ENGINE:
+			return (void*)poulsbo_release_engine;
+		case B_WAIT_ENGINE_IDLE:
+			return (void*)poulsbo_wait_engine_idle;
+		case B_GET_SYNC_TOKEN:
+			return (void*)poulsbo_get_sync_token;
+		case B_SYNC_TO_TOKEN:
+			return (void*)poulsbo_sync_to_token;
+
+		case B_SCREEN_TO_SCREEN_BLIT:
+			return (void*)poulsbo_screen_to_screen_blit;
+		case B_FILL_RECTANGLE:
+			return (void*)poulsbo_fill_rectangle;
+		case B_INVERT_RECTANGLE:
+			return (void*)poulsbo_invert_rectangle;
 	}
 	return NULL;
 }

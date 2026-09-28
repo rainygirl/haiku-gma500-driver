@@ -75,11 +75,25 @@ Either way, reboot afterwards. app_server falls back to the VESA driver on its
 own when `/dev/graphics/poulsbo` is gone, so a broken driver cannot leave the
 machine without a display - and if it ever does, ssh in and remove the files.
 
+## About 2D acceleration
+
+The driver drives the chip's PowerVR SGX535 2D engine and offers the screen to
+screen copy, rectangle fill and invert hooks. A copy measures about 13 times
+faster than the same copy done by the CPU on a VAIO P.
+
+Haiku's app_server, however, does not call those hooks: its
+`AccelerantHWInterface` has no code left that uses them, and every copy is done
+with the CPU. So on a stock Haiku the hooks are present but idle.
+
+The [Sony VAIO P patch set](https://github.com/rainygirl/haiku-sony-vaio-p-patch)
+includes a small app_server change that lets `DrawingEngine::CopyRect` use the
+accelerant's blit hook, which is where the speed-up actually shows. Nothing
+else is needed to install this driver.
+
 ## What this driver does not do
 
-- **No 2D or 3D acceleration.** The drawing engine on this chip is a PowerVR
-  SGX535 with no public documentation. Only the display half of the chip, which
-  is Intel's and i915-shaped, is used here.
+- **No 3D acceleration.** There is no public documentation for the 3D side of
+  the SGX535.
 - **No mode setting.** The mode the BIOS set is kept as it is. On the machines
   this targets the panel is a fixed resolution anyway.
 - **No DPMS beyond "on".**

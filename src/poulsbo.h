@@ -76,4 +76,45 @@ enum {
 #define PSB_CURSOR_X_SHIFT			0
 #define PSB_CURSOR_Y_SHIFT			16
 
+/* --- SGX 2D 엔진 -------------------------------------------------------
+ *
+ * 이 칩의 그리기 엔진은 PowerVR SGX535 다. 3D 쪽은 문서가 없지만 2D 블리터는
+ * 리눅스 staging 시절의 gma500 (psb_2d.c, psb_reg.h) 에 명령 형식이 남아 있다.
+ * 그 코드는 정작 `if (1 || ...) return cfb_fillrect(...)` 로 막힌 채 커밋돼서
+ * 상류에서 실제로 쓰인 적은 없다.
+ *
+ * 리눅스와 다른 점이 하나 있고 그것이 핵심이다. psb_2d.c 는 2D 엔진의 주소
+ * 기준(CR_BIF_TWOD_REQ_BASE)에 GTT 창의 주소를 넣지만, 그렇게 하면 이 기기에서
+ * 아무것도 그려지지 않는다(엔진은 명령을 소비하고 완료 카운터도 올라가지만
+ * 메모리는 그대로다). 프레임버퍼의 **물리 주소**를 기준으로 주면 그린다.
+ */
+#define PSB_SGX_OFFSET				0x40000
+#define PSB_SGX_2D_SLAVE_PORT		0x4000
+#define PSB_CR_BIF_TWOD_REQ_BASE	0x0c88
+#define PSB_CR_2D_BLIT_STATUS		0x0e04
+#define PSB_C2B_STATUS_BUSY			(1 << 24)
+#define PSB_CR_2D_SOCIF				0x0e18
+#define PSB_C2_SOCIF_FREESPACE_MASK	0xff
+
+/* 명령 블록 머리 */
+#define PSB_2D_SRC_OFF_BH			0x30000000
+#define PSB_2D_FENCE_BH				0x70000000
+#define PSB_2D_BLIT_BH				0x80000000
+#define PSB_2D_SRC_SURF_BH			0x90000000
+#define PSB_2D_DST_SURF_BH			0xa0000000
+#define PSB_2D_FLUSH_BH				0xf0000000
+
+#define PSB_2D_DST_8888ARGB			0x00060000
+#define PSB_2D_SRC_8888ARGB			0x00060000
+#define PSB_2D_USE_PAT				0x00010000
+#define PSB_2D_ROP3_PATCOPY			0x0000f0f0
+#define PSB_2D_ROP3_SRCCOPY			0x0000cccc
+#define PSB_2D_ROP3_DSTINVERT		0x00005555
+#define PSB_2D_COPYORDER_TL2BR		(0 << 23)
+#define PSB_2D_COPYORDER_BR2TL		(1 << 23)
+#define PSB_2D_COPYORDER_TR2BL		(2 << 23)
+#define PSB_2D_COPYORDER_BL2TR		(3 << 23)
+#define PSB_2D_XSTART_SHIFT			12
+#define PSB_2D_XSIZE_SHIFT			12
+
 #endif	/* POULSBO_H */

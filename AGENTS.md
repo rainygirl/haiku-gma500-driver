@@ -158,6 +158,58 @@ BIOS 가 세운 모드를 그대로 쓰므로 **LUT 를 프로그래밍한 적�
 
     CURBCNTR 14000027 -> 10000027
 
+## 2D 블리터: 엔진은 살아 있었다
+
+커서가 붙은 뒤 SGX 쪽을 읽기만으로 찔러 봤다(`tools/sgxprobe.c`). 죽어 있을
+거라고 봤는데 `CR_CORE_ID` 가 `0x0113` 을 돌려줬다. 클럭도 전원도 이미 켜져
+있다. 부팅 펌웨어가 켜 놓은 것을 아무도 끄지 않았을 뿐이다.
+
+명령은 BAR0+0x40000 의 SGX 레지스터 영역에서 +0x4000 슬레이브 포트로 32 비트씩
+밀어 넣는다. `CR_2D_SOCIF` 가 FIFO 의 빈 자리를 알려주고(0x80 이면 비어 있음),
+`CR_2D_BLIT_STATUS` 의 비트 24 가 BUSY, 하위 24 비트가 완료한 블릿 수다.
+
+### 리눅스와 갈리는 지점은 주소 기준 하나였다
+
+명령 형식은 리눅스 staging 시절의 `psb_2d.c` 를 그대로 따랐는데 처음에는
+아무것도 그려지지 않았다. 엔진은 명령을 소비했고 완료 카운터도 올라갔다.
+메모리만 그대로였다.
+
+원인은 `CR_BIF_TWOD_REQ_BASE` 다. `psb_2d.c` 는 여기에 GTT 창의 주소를 넣는다.
+이 기기에서는 프레임버퍼의 **물리 주소**(`0x7f800000`)를 넣어야 그린다.
+
+그리고 참고한 그 코드는 상류에서 한 번도 켜진 적이 없다. `psbfb_fillrect` 는
+
+    if (1 || !dev_priv->ops->accel_2d || ...)
+        return cfb_fillrect(info, region);
+
+이렇게 `if (1 ||` 로 막힌 채 커밋됐다. 명령 형식의 출처로는 쓸 만하지만,
+누가 검증해 둔 코드는 아니라고 보는 편이 맞다.
+
+### 정작 app_server 가 이 훅을 부르지 않는다
+
+fill/blit/invert 를 다 붙이고 accelerant 를 올린 뒤, 창을 여덟 번 옮기고
+`CR_2D_BLIT_STATUS` 를 읽었다. 0 이었다. 한 번도 불리지 않았다는 뜻이다.
+
+app_server 소스를 보면 이유가 분명하다. `AccelerantHWInterface` 에는
+`B_SCREEN_TO_SCREEN_BLIT` 도 `B_FILL_RECTANGLE` 도 `B_ACQUIRE_ENGINE` 도
+나오지 않는다. 이 훅들이 남아 있는 곳은 `DWindowHWInterface`, 즉 app_server 를
+창 안에서 돌리는 시험용 하니스뿐이다. 실제 경로는
+`DrawingEngine::CopyRegion` -> `CopyRect()` -> CPU `memcpy` 다.
+
+그 CPU 복사가 얼마나 비싼지 쟀다(`tools/bench2d.c`, 800x500 구역 20 회):
+
+    CPU memcpy   한 번 52.8 ms   초당 18 회
+    SGX 2D 블릿  한 번  4.1 ms   초당 243 회
+
+12.9 배다. 프레임버퍼를 write-combining 으로 잡아 둔 탓도 크다. 쓰기는 빨라졌지만
+읽기는 캐시를 타지 못하므로, 화면에서 화면으로 옮기는 복사가 유독 비싸다.
+
+그래서 [VAIO P 패치](https://github.com/rainygirl/haiku-sony-vaio-p-patch) 쪽에
+`DrawingEngine::CopyRect` 가 accelerant 의 블릿 훅을 먼저 시도하도록 하는 수정을
+넣었다. `HWInterface::AcceleratedCopyRect` 가 기본값 false 를 돌려주므로 다른
+드라이버는 영향을 받지 않고, `AccelerantHWInterface` 만 훅이 있을 때 true 를
+돌려준다. 패키지로만 설치한 경우에는 훅이 준비만 되어 있고 불리지는 않는다.
+
 ## 실기기에서 확인된 것
 
 Sony VAIO P (VGN-P70H), Haiku R1~beta6+development hrev99002, x86_gcc2:
@@ -170,10 +222,21 @@ Sony VAIO P (VGN-P70H), Haiku R1~beta6+development hrev99002, x86_gcc2:
 
 바탕화면·Deskbar·Tracker 모두 정상, 창 드래그 시 잔상 없음.
 
+2D 엔진:
+
+    CR_CORE_ID             00000113   SGX535 이 응답
+    CR_2D_SOCIF            00000080   FIFO 비어 있음
+    CR_BIF_TWOD_REQ_BASE   7f800000   프레임버퍼 물리 주소
+    CR_2D_BLIT_STATUS      완료 카운터가 명령마다 증가
+
+`tools/fill2d.c`, `tools/blit2d.c` 로 채우기·복사·겹치는 복사를 보내고,
+프레임버퍼 메모리를 직접 읽어 픽셀 값으로 확인했다.
+
 ## 앞으로
 
-- **2D 블리터.** SGX 쪽이라 문서가 없다. 리눅스 staging 의 `psb_2d.c` 가
-  git 역사에 남아 있어 명령 형식을 참고할 수는 있다. 성공 확률은 낮게 본다.
+- **채우기·반전 가속.** 훅은 있으나 app_server 가 부르는 곳이 없다. 패치 쪽에
+  `FillRegion`/`InvertRegion` 경로까지 되살릴지는 회귀 위험을 보고 판단한다.
+  복사에 비하면 이득도 작다.
 - **모드 설정.** 패널이 고정이라 실익이 적고, 위험은 크다.
 - **DPMS.** 지금은 `B_DPMS_ON` 만 보고한다. 파이프/패널 전원 순서를 지켜야
   하므로 별도 작업이다.
