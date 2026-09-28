@@ -136,13 +136,35 @@ Haiku 의 vesa 드라이버가 같은 함수로 이미 해결해 두고 있었�
 `vm_set_area_memory_type` 은 비공개지만 커널이 심볼을 내보낸다. 이 한 줄을
 넣자 잔상이 사라졌다.
 
+### 감마 비트를 켜면 커서 색이 깨진다
+
+리눅스 `gma_display.c` 를 그대로 따라 `MCURSOR_GAMMA_ENABLE` 을 켰더니,
+실기기에서 손 모양 포인터의 **검은 테두리가 사라지고 흰색과 섞여** 보였다.
+
+원인을 데이터에서 먼저 배제했다. 하드웨어가 읽고 있는 커서 버퍼를 그대로 꺼내
+보니(`tools/dumpcursor.c`) 그림은 완벽했다 - 흰 속(rgb 252~254)과 검은 테두리가
+정확히 들어 있고, 반투명 픽셀 134개는 전부 검정(rgb=0)인 안티앨리어싱이었다.
+즉 app_server 가 써 넣은 것에는 문제가 없고, 하드웨어가 그것을 해석하는 방식이
+문제였다.
+
+감마를 켜면 커서 픽셀이 파이프의 팔레트 LUT 를 통과한다. 그런데 이 드라이버는
+BIOS 가 세운 모드를 그대로 쓰므로 **LUT 를 프로그래밍한 적이 없다**. 디스플레이
+평면은 감마를 끄고 있어서(`DSPBCNTR` 비트 30 = 0) 영향이 없지만, 커서만 켜 두면
+초기화되지 않은 LUT 를 지나며 색이 뒤집힌다. 리눅스는 감마를 켜는 대신 LUT 도
+함께 채운다 - 앞부분만 따라 한 것이 잘못이었다.
+
+`tools/gammatoggle.c` 로 살아 있는 레지스터의 비트 26 만 끄자 그 자리에서
+테두리가 돌아왔다. app_server 도 재시작도 필요 없는 실험이었다.
+
+    CURBCNTR 14000027 -> 10000027
+
 ## 실기기에서 확인된 것
 
 Sony VAIO P (VGN-P70H), Haiku R1~beta6+development hrev99002, x86_gcc2:
 
     /dev/graphics/poulsbo          드라이버가 publish
     app_server 가 로드한 accelerant  poulsbo.accelerant (vesa 아님)
-    CURBCNTR  14000027             app_server 가 켠 하드웨어 커서
+    CURBCNTR  10000027             app_server 가 켠 하드웨어 커서 (감마 없음)
     CURBBASE  00bf3000             드라이버가 잡은 물리 연속 16 KB
     CURBPOS   017e031e             마우스 위치가 그대로 반영
 

@@ -67,6 +67,9 @@ enum {
 /* 커서 제어 비트 - 리눅스 gma500 의 gma_display.c 와 같은 조합 */
 #define PSB_CURSOR_MODE_DISABLE		0x00
 #define PSB_CURSOR_MODE_64_ARGB		((1 << 5) | 0x07)
+/* 감마는 쓰지 않는다. 리눅스 gma500 은 이 비트를 켜지만 LUT 도 함께
+   프로그래밍한다. BIOS 가 세운 모드를 그대로 쓰는 이 드라이버에서는 LUT 가
+   초기화돼 있지 않아, 켜면 커서 색이 깨진다. */
 #define PSB_MCURSOR_GAMMA_ENABLE	(1 << 26)
 #define PSB_MCURSOR_PIPE_B			(1 << 28)
 #define PSB_CURSOR_POS_SIGN			0x8000

@@ -47,10 +47,12 @@ write32(uint32 offset, uint32 value)
 static void
 arm_cursor(void)
 {
-	/* base 를 다시 쓰는 것이 더블 버퍼 갱신 신호다. */
+	/* base 를 다시 쓰는 것이 더블 버퍼 갱신 신호다.
+	   감마는 켜지 않는다 - 이 파이프의 팔레트 LUT 는 초기화돼 있지 않고
+	   (DSPBCNTR 의 감마 비트도 꺼져 있다) 커서만 그 LUT 를 통과시키면
+	   검정 테두리가 흰색과 섞여 깨져 보인다. 실기기에서 확인했다. */
 	write32(PSB_CURBCNTR, sCursorVisible
-		? (PSB_MCURSOR_PIPE_B | PSB_MCURSOR_GAMMA_ENABLE
-			| PSB_CURSOR_MODE_64_ARGB)
+		? (PSB_MCURSOR_PIPE_B | PSB_CURSOR_MODE_64_ARGB)
 		: PSB_CURSOR_MODE_DISABLE);
 	write32(PSB_CURBBASE, sCursorVisible ? sShared->cursor_physical : 0);
 }
