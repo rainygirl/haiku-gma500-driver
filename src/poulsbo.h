@@ -40,6 +40,15 @@ typedef struct {
 	uint32			bytes_per_row;
 	uint32			framebuffer_physical;
 	display_mode	current_mode;
+	/* 스톨른 메모리 전체와, 프레임버퍼 뒤에 남는 자리. 남는 자리는
+	   스프라이트 평면(평면 C)의 원본 버퍼로 쓴다. framebuffer_area 는
+	   스톨른 전체를 덮으므로 accelerant 가 그대로 접근한다.
+	   새 필드는 구조체 끝에 둔다 - 드라이버와 accelerant 의 판이 어긋나도
+	   앞쪽 필드의 자리가 밀리지 않는다. 짝이 맞지 않으면 sprite_size 가
+	   0 이라 오버레이 훅이 스스로 비활성이 된다. */
+	uint32			stolen_size;
+	uint32			sprite_offset;
+	uint32			sprite_size;
 } poulsbo_shared_info;
 
 typedef struct {
@@ -63,6 +72,36 @@ enum {
 #define PSB_CURBCNTR		0x700c0
 #define PSB_CURBBASE		0x700c4
 #define PSB_CURBPOS			0x700c8
+
+/* --- 스프라이트 평면 (평면 C) ------------------------------------------
+ *
+ * 이 칩에는 오버레이 평면이 없다. Intel SCH US15W 데이터시트(문서 319537)
+ * 9.3.1 은 평면을 Display / Cursor / VGA 셋만 열거하고, 105 쪽 어디에도
+ * overlay 라는 말이 나오지 않는다. MMIO 0x30000 의 오버레이 레지스터 블록은
+ * i915 에서 물려받은 잔재이고, 켜면 디스플레이 FIFO 가 굶어 화면이 죽는다.
+ *
+ * 대신 데이터시트가 보장하는 것이 스프라이트 평면이다. 평면 C 는 1 차 평면과
+ * 같은 레지스터 배치에 위치·크기·컬러키를 더 가지며, 파이프 B 에 붙일 수
+ * 있다. 색 공간은 RGB 뿐이다 - 디스플레이 평면의 픽셀 포맷 필드에 YUV 값이
+ * 없다. 확대·축소도 없다. 그래서 1:1 RGB 합성 전용이다.
+ *
+ * Z 순서 비트가 핵심이다. 0(= 디스플레이 A 위) 이어야 1 차 평면 위로 올라온다.
+ * 1(= 오버레이 위) 로 두면 1 차 평면 아래에 깔려 보이지 않는다.
+ */
+#define PSB_DSPCCNTR		0x72180
+#define PSB_DSPCLINOFF		0x72184
+#define PSB_DSPCSTRIDE		0x72188
+#define PSB_DSPCPOS			0x7218c
+#define PSB_DSPCSIZE		0x72190
+#define PSB_DSPCSURF		0x7219c
+#define PSB_DSPCTILEOFF		0x721a4
+
+#define PSB_PLANE_ENABLE			(1u << 31)
+#define PSB_PLANE_FORMAT_RGB15		(0x4u << 26)
+#define PSB_PLANE_FORMAT_RGB16		(0x5u << 26)
+#define PSB_PLANE_FORMAT_RGB32		(0x6u << 26)
+#define PSB_PLANE_SEL_PIPE_B		(1u << 24)
+#define PSB_SPRITE_ABOVE_DISPLAY	0u
 
 /* 커서 제어 비트 - 리눅스 gma500 의 gma_display.c 와 같은 조합 */
 #define PSB_CURSOR_MODE_DISABLE		0x00

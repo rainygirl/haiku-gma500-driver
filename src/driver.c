@@ -114,8 +114,11 @@ init_driver(void)
 	physical_entry entry;
 	void* address;
 	uint32 stolenBase;
+	uint32 stolenSize;
 	uint32 stride;
 	uint32 height;
+	uint32 index;
+	uint32 entries;
 	area_id gttArea;
 	uint32* gtt;
 
@@ -145,6 +148,18 @@ init_driver(void)
 		goto error;
 	}
 	stolenBase = gtt[0] & ~0xfff;
+	/* 스톨른이 어디까지인지는 GTT 가 알려준다. BIOS 는 앞쪽 칸들을 스톨른
+	   페이지로 연속 매핑하고, 그 뒤부터는 스크래치 페이지를 가리킨다.
+	   연속이 끊기는 지점이 스톨른의 끝이다. */
+	entries = sPCIInfo.u.h0.base_register_sizes[3] / 4;
+	stolenSize = 0;
+	for (index = 0; index < entries; index++) {
+		if ((gtt[index] & 1) == 0)
+			break;
+		if ((gtt[index] & ~0xfff) != stolenBase + index * B_PAGE_SIZE)
+			break;
+		stolenSize += B_PAGE_SIZE;
+	}
 	delete_area(gttArea);
 
 	stride = read32(PSB_DSPBSTRIDE) & 0xffff;
@@ -154,8 +169,12 @@ init_driver(void)
 		goto error;
 	}
 
+	if (stolenSize < stride * height)
+		stolenSize = stride * height;
+	/* 프레임버퍼만이 아니라 스톨른 전체를 덮어 둔다. 뒤에 남는 자리를
+	   스프라이트 평면의 원본 버퍼로 쓰기 때문이다. */
 	sFramebufferArea = map_physical_memory("poulsbo framebuffer", stolenBase,
-		stride * height, B_ANY_KERNEL_ADDRESS, POULSBO_AREA_PROTECTION,
+		stolenSize, B_ANY_KERNEL_ADDRESS, POULSBO_AREA_PROTECTION,
 		&address);
 	if (sFramebufferArea < B_OK) {
 		TRACE("프레임버퍼 매핑 실패\n");
@@ -199,13 +218,21 @@ init_driver(void)
 	sShared->framebuffer_physical = stolenBase;
 	sShared->framebuffer_size = stride * height;
 	sShared->bytes_per_row = stride;
+	sShared->stolen_size = stolenSize;
+	sShared->sprite_offset = (stride * height + B_PAGE_SIZE - 1)
+		& ~(B_PAGE_SIZE - 1);
+	sShared->sprite_size = stolenSize > sShared->sprite_offset
+		? stolenSize - sShared->sprite_offset : 0;
 	read_current_mode(&sShared->current_mode);
 
-	TRACE("%ux%u, stride %u, 스톨른 %08x, 커서 %08x\n",
+	TRACE("%ux%u, stride %u, 스톨른 %08x (%u KB), 커서 %08x, "
+		"스프라이트 %u KB\n",
 		(unsigned)sShared->current_mode.virtual_width,
 		(unsigned)sShared->current_mode.virtual_height,
 		(unsigned)stride, (unsigned)stolenBase,
-		(unsigned)sShared->cursor_physical);
+		(unsigned)(stolenSize / 1024),
+		(unsigned)sShared->cursor_physical,
+		(unsigned)(sShared->sprite_size / 1024));
 	return B_OK;
 
 error:

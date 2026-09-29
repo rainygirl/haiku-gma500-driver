@@ -94,6 +94,18 @@ The hooks are kept because they are correct and cost nothing, and because
 anything that drives this accelerant directly can use them. See
 [AGENTS.md](AGENTS.md) for the full measurements.
 
+## Sprite plane
+
+The chip has no overlay plane - Intel's SCH US15W datasheet lists only Display,
+Cursor and VGA planes, and never uses the word "overlay". It does have a sprite
+plane, which the driver offers through Haiku's overlay hooks: a second RGB
+surface composited by the display engine, positioned anywhere on screen.
+
+There is no YUV conversion and no scaling; display planes on this chip are RGB
+only and show their source 1:1. Note also that Haiku's own overlay path does not
+currently hand the pixel buffer to the application correctly, so the hooks are
+not usable from an app until that is fixed. See [AGENTS.md](AGENTS.md).
+
 ## What this driver does not do
 
 - **No 3D acceleration.** There is no public documentation for the 3D side of

@@ -233,6 +233,80 @@ CPU 복사 전에 먼저 시도하게 했다. 빌드해서 실기기에 올렸�
 그래서 app_server 수정은 패치에서 다시 뺐다. 훅 자체는 남긴다. 구현이 올바르고,
 비용이 없고, accelerant 를 직접 부르는 쪽에서는 쓸 수 있다.
 
+## 오버레이 평면은 이 칩에 없다
+
+커서와 2D 다음으로 오버레이를 노렸다. app_server 가 2D 훅과 달리 오버레이
+훅은 실제로 호출하기 때문이다(`BitmapManager.cpp` 의 `AcquireOverlayChannel`).
+YUV 변환과 확대를 디스플레이 엔진이 맡으면 영상 재생에서 CPU 가 크게 빈다.
+
+읽기만 하는 프로브로 MMIO 0x30000 을 보니 살아 있어 보였다. `DOVSTA` 가
+`0x80084000`, `OGAMC0~5` 에 하드웨어 기본 감마 램프(0x08/0x10/0x20/0x40/
+0x80/0xc0). 물리 주소를 `OVADD` 에 넣자 레지스터 버퍼가 실제로 적재됐다 -
+섀도 레지스터 0x30100 부터가 우리가 쓴 창 위치·크기·버퍼 주소·OCOMD·OCONFIG
+를 그대로 되비쳤다. i915 는 `MI_OVERLAY_FLIP` 링 명령으로 갱신을 거는데
+Poulsbo 에는 그 커맨드 스트리머가 없다(그리기 엔진이 PowerVR 이다). 레지스터
+쓰기만으로 걸린다는 것까지 확인했다.
+
+그런데 켜면 매번 디스플레이 FIFO 가 굶었다. 화면이 옆으로 흐르며 떨리다
+꺼지고, `PIPEBSTAT` 의 비트 31(언더런)이 서서 내려오지 않는다. 평면 재시작,
+파이프 재시작, 패널 전원 순환을 다 만들어 봤지만 어느 것도 되살리지 못했다 -
+리셋 말고는 방법이 없었다. 다섯 가지를 바꿔 가며 시험했고 결과는 모두 같았다:
+
+    OVADD 를 GTT 오프셋 / 물리 주소       물리 주소여야 적재된다
+    버퍼를 GTT / 물리 / 프레임버퍼 자체    전부 같은 언더런
+    slot_time 0x80 / 0                    같음
+    DSPARB, DSPFW1 워터마크                같음
+    폴리페이즈 필터 계수 비움 / 채움       같음
+
+답은 자료에 있었다. Intel SCH US15W 데이터시트(문서 319537) 9.3.1 은 평면을
+**Display / Cursor / VGA 셋만** 열거하고, 105 쪽 전체에 overlay 라는 말이 한
+번도 나오지 않는다. 이 칩에는 오버레이 평면이 없다. 0x30000 의 레지스터
+블록은 i915 에서 물려받은 껍데기이고, 켜면 어디에도 연결되지 않은 요청이
+디스플레이 메모리 경로를 막는다.
+
+추측으로 좁히기 전에 데이터시트를 먼저 읽었어야 했다. 재부팅 다섯 번을 썼다.
+
+## 대신 스프라이트 평면이 있다
+
+같은 데이터시트가 보장하는 것이 있다. "The secondary display plane can be
+used ... as a sprite plane on either the primary or secondary display."
+
+평면 C(0x72180~)는 1 차 평면과 같은 레지스터 배치에 위치·크기·컬러키를
+더 가지며 `DISPPLANE_SEL_PIPE_B` 로 파이프 B 에 붙는다. 시험 첫 판에 언더런
+없이 깨끗하게 켜지고 꺼졌다. 다만 화면에는 아무것도 없었는데, 원인은 Z 순서
+비트였다.
+
+    비트 0~2 = 1 (오버레이 위)    1 차 평면 아래에 깔려 보이지 않는다
+    비트 0~2 = 0 (디스플레이 A 위) 1 차 평면 위로 올라온다
+
+0 으로 바꾸자 색 띠가 그대로 떴다. 주소 레지스터는 `DSPCSURF` 가 아니라
+`DSPCLINOFF` 다 - SURF 에 쓴 값은 되읽히지 않는다(4 세대부터의 레지스터다).
+
+제약이 둘 있다. 색 공간은 RGB 뿐이다. 디스플레이 평면의 픽셀 포맷 필드에
+YUV 값이 정의되어 있지 않다 - `psb_intel_reg.h` 도 i915 도 8BPP / 15·16 /
+16 / 32-no-alpha / 32 뿐이다. 그리고 확대·축소가 없다. YUV 변환과 스케일링은
+오버레이 유닛의 일이었고 그 유닛이 없다.
+
+accelerant 는 이 평면으로 오버레이 훅을 구현한다. 드라이버가 프레임버퍼 뒤에
+남는 스톨른 메모리(이 기기에서 3132 KB)를 잡아 두고 `sprite_offset` /
+`sprite_size` 로 알려준다.
+
+### 그런데 Haiku 의 오버레이 경로는 앱 경계에서 끊겨 있다
+
+`SetViewOverlay` 로 시험하면 훅은 정확히 호출된다 - 우리가 정한
+`bytes_per_row` 가 앱까지 도달한다. 그러나 `BBitmap::Bits()` 에 쓰면 앱이
+죽는다.
+
+`Overlay::SetClientData` 가 `fClientData->buffer = fOverlayBuffer->buffer` 로
+**app_server 주소공간의 포인터**를 그대로 공유 메모리에 넣고, 클라이언트는
+`ServerMemoryAllocator::AddArea` 로 영역을 `B_ANY_ADDRESS` 에 매핑한다. 두
+주소가 같을 리 없다. 실기기에서 `Bits()` 가 `0x45768000` 을 돌려줬고
+`area_for()` 는 -1 이었다.
+
+드라이버로 고칠 수 있는 문제가 아니다. 버퍼의 `area_id` 와 오프셋을 앱에
+넘기고 앱이 그 영역을 clone 하도록 `overlay_client_data` 와 libbe 를 함께
+고쳐야 한다. 훅은 올바르고 비용이 없으므로 그대로 둔다.
+
 ## 실기기에서 확인된 것
 
 Sony VAIO P (VGN-P70H), Haiku R1~beta6+development hrev99002, x86_gcc2:
@@ -257,6 +331,10 @@ Sony VAIO P (VGN-P70H), Haiku R1~beta6+development hrev99002, x86_gcc2:
 
 ## 앞으로
 
+- **Haiku 의 오버레이 경로 수정.** 스프라이트 평면은 동작하는데 app_server 가
+  픽셀 버퍼를 앱에 전달하지 못한다. `overlay_client_data` 에 `area_id` 와
+  오프셋을 더하고 `BBitmap::Bits()` 가 그 영역을 clone 하게 하면 된다.
+  app_server 와 libbe 를 함께 고쳐야 하므로 이미지 전체를 다시 빌드해야 한다.
 - **채우기·반전 가속.** 훅은 있으나 app_server 가 부르는 곳이 없다. 패치 쪽에
   `FillRegion`/`InvertRegion` 경로까지 되살릴지는 회귀 위험을 보고 판단한다.
   복사에 비하면 이득도 작다.

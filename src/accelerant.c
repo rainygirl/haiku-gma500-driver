@@ -14,6 +14,7 @@
 #include <Drivers.h>
 #include <GraphicsDefs.h>
 #include <OS.h>
+#include <video_overlay.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -37,11 +38,25 @@ static uint16 sHotX = 0;
 static uint16 sHotY = 0;
 static bool sCursorVisible = false;
 
+/* 스프라이트 평면 상태. 버퍼는 하나만 내준다 - 스톨른에 남는 자리가
+   3 MB 안팎이고, 이 기기에서 오버레이를 두 개 이상 쓸 일은 없다. */
+static overlay_buffer sOverlayBuffer;
+static bool sOverlayBufferUsed = false;
+static bool sOverlayTokenUsed = false;
+static bool sSpriteVisible = false;
+
 
 static void
 write32(uint32 offset, uint32 value)
 {
 	*(volatile uint32*)(sRegisters + offset) = value;
+}
+
+
+static uint32
+read32(uint32 offset)
+{
+	return *(volatile uint32*)(sRegisters + offset);
 }
 
 
@@ -531,6 +546,232 @@ poulsbo_invert_rectangle(engine_token* engineToken, fill_rect_params* list,
 }
 
 
+
+
+//	#pragma mark - 스프라이트 평면 (오버레이 훅)
+
+
+/* 이 칩에는 오버레이 평면이 없다. 데이터시트(문서 319537) 9.3.1 이 평면을
+   Display / Cursor / VGA 셋만 열거하고 overlay 라는 말은 105 쪽 어디에도
+   없다. 대신 평면 C 를 스프라이트로 파이프 B 에 붙일 수 있다. RGB 전용이고
+   확대·축소가 없으므로 1:1 로만 내준다. app_server 는 이 훅들을 실제로
+   호출하므로(BitmapManager.cpp 의 AcquireOverlayChannel), 영상 창이 이
+   경로를 타면 프레임마다 일어나던 CPU 합성이 사라진다. */
+
+static uint32
+poulsbo_overlay_count(const display_mode* mode)
+{
+	return sShared->sprite_size > 0 ? 1 : 0;
+}
+
+
+static const uint32*
+poulsbo_overlay_supported_spaces(const display_mode* mode)
+{
+	/* 디스플레이 평면의 픽셀 포맷 필드에는 YUV 값이 없다. RGB 뿐이다. */
+	static const uint32 kSpaces[] = { B_RGB16, B_RGB32, 0 };
+	return kSpaces;
+}
+
+
+static uint32
+poulsbo_overlay_supported_features(uint32 colorSpace)
+{
+	return B_OVERLAY_COLOR_KEY;
+}
+
+
+static const overlay_buffer*
+poulsbo_allocate_overlay_buffer(color_space space, uint16 width, uint16 height)
+{
+	uint32 bytesPerPixel;
+	uint32 bytesPerRow;
+
+	if (sOverlayBufferUsed)
+		return NULL;
+
+	switch (space) {
+		case B_RGB16:
+			bytesPerPixel = 2;
+			break;
+		case B_RGB32:
+			bytesPerPixel = 4;
+			break;
+		default:
+			return NULL;
+	}
+
+	/* 스트라이드는 64 바이트에 맞춘다 - 디스플레이 평면이 캐시라인
+	   단위로 읽는다. */
+	bytesPerRow = ((uint32)width * bytesPerPixel + 63) & ~63;
+	if (bytesPerRow * height > sShared->sprite_size)
+		return NULL;
+
+	sOverlayBuffer.space = space;
+	sOverlayBuffer.width = width;
+	sOverlayBuffer.height = height;
+	sOverlayBuffer.bytes_per_row = bytesPerRow;
+	sOverlayBuffer.buffer = sFramebuffer + sShared->sprite_offset;
+	sOverlayBuffer.buffer_dma = (void*)(sShared->framebuffer_physical
+		+ sShared->sprite_offset);
+	sOverlayBufferUsed = true;
+	return &sOverlayBuffer;
+}
+
+
+static status_t
+poulsbo_release_overlay_buffer(const overlay_buffer* buffer)
+{
+	if (buffer != &sOverlayBuffer)
+		return B_BAD_VALUE;
+	if (sSpriteVisible) {
+		write32(PSB_DSPCCNTR, 0);
+		write32(PSB_DSPCLINOFF, 0);
+		(void)read32(PSB_DSPCLINOFF);
+		sSpriteVisible = false;
+	}
+	sOverlayBufferUsed = false;
+	return B_OK;
+}
+
+
+static status_t
+poulsbo_get_overlay_constraints(const display_mode* mode,
+	const overlay_buffer* buffer, overlay_constraints* constraints)
+{
+	if (constraints == NULL)
+		return B_BAD_VALUE;
+	memset(constraints, 0, sizeof(overlay_constraints));
+
+	constraints->view.h_alignment = 0;
+	constraints->view.v_alignment = 0;
+	constraints->view.width_alignment = 7;
+	constraints->view.height_alignment = 0;
+	constraints->view.width.min = 4;
+	constraints->view.height.min = 4;
+	constraints->view.width.max = mode->virtual_width;
+	constraints->view.height.max = mode->virtual_height;
+
+	constraints->window.h_alignment = 0;
+	constraints->window.v_alignment = 0;
+	constraints->window.width_alignment = 0;
+	constraints->window.height_alignment = 0;
+	constraints->window.width.min = 4;
+	constraints->window.height.min = 4;
+	constraints->window.width.max = mode->virtual_width;
+	constraints->window.height.max = mode->virtual_height;
+
+	/* 확대·축소가 없다. 스프라이트 평면은 원본을 1:1 로만 내보낸다. */
+	constraints->h_scale.min = 1.0f;
+	constraints->h_scale.max = 1.0f;
+	constraints->v_scale.min = 1.0f;
+	constraints->v_scale.max = 1.0f;
+	return B_OK;
+}
+
+
+static overlay_token
+poulsbo_allocate_overlay(void)
+{
+	if (sOverlayTokenUsed)
+		return NULL;
+	sOverlayTokenUsed = true;
+	return (overlay_token)&sOverlayTokenUsed;
+}
+
+
+static status_t
+poulsbo_release_overlay(overlay_token token)
+{
+	if (token != (overlay_token)&sOverlayTokenUsed)
+		return B_BAD_VALUE;
+	if (sSpriteVisible) {
+		write32(PSB_DSPCCNTR, 0);
+		write32(PSB_DSPCLINOFF, 0);
+		(void)read32(PSB_DSPCLINOFF);
+		sSpriteVisible = false;
+	}
+	sOverlayTokenUsed = false;
+	return B_OK;
+}
+
+
+static status_t
+poulsbo_configure_overlay(overlay_token token, const overlay_buffer* buffer,
+	const overlay_window* window, const overlay_view* view)
+{
+	uint32 control;
+	uint32 offset;
+	int32 left, top, right, bottom;
+
+	if (token != (overlay_token)&sOverlayTokenUsed
+		|| buffer != &sOverlayBuffer)
+		return B_BAD_VALUE;
+
+	if (window == NULL || view == NULL) {
+		/* 끄라는 뜻이다. */
+		if (sSpriteVisible) {
+			write32(PSB_DSPCCNTR, 0);
+			write32(PSB_DSPCLINOFF, 0);
+			(void)read32(PSB_DSPCLINOFF);
+			sSpriteVisible = false;
+		}
+		return B_OK;
+	}
+
+	/* 화면 밖으로 나가는 부분은 잘라 낸다. 스프라이트에는 확대·축소가
+	   없으므로 원본 시작점도 같은 만큼 민다. */
+	left = window->h_start;
+	top = window->v_start;
+	right = left + window->width;
+	bottom = top + window->height;
+	if (right > (int32)sShared->current_mode.virtual_width)
+		right = sShared->current_mode.virtual_width;
+	if (bottom > (int32)sShared->current_mode.virtual_height)
+		bottom = sShared->current_mode.virtual_height;
+
+	offset = (uint32)view->v_start * buffer->bytes_per_row;
+	if (left < 0) {
+		offset += (uint32)(-left) * (buffer->bytes_per_row / buffer->width);
+		left = 0;
+	}
+	if (top < 0) {
+		offset += (uint32)(-top) * buffer->bytes_per_row;
+		top = 0;
+	}
+	offset += (uint32)view->h_start
+		* (buffer->space == B_RGB16 ? 2 : 4);
+
+	if (left >= right || top >= bottom) {
+		if (sSpriteVisible) {
+			write32(PSB_DSPCCNTR, 0);
+			write32(PSB_DSPCLINOFF, 0);
+			(void)read32(PSB_DSPCLINOFF);
+			sSpriteVisible = false;
+		}
+		return B_OK;
+	}
+
+	control = PSB_PLANE_ENABLE | PSB_PLANE_SEL_PIPE_B
+		| PSB_SPRITE_ABOVE_DISPLAY;
+	control |= buffer->space == B_RGB16
+		? PSB_PLANE_FORMAT_RGB16 : PSB_PLANE_FORMAT_RGB32;
+
+	write32(PSB_DSPCSTRIDE, buffer->bytes_per_row);
+	write32(PSB_DSPCPOS, ((uint32)top << 16) | (uint32)left);
+	write32(PSB_DSPCSIZE, ((uint32)(bottom - top - 1) << 16)
+		| (uint32)(right - left - 1));
+	write32(PSB_DSPCTILEOFF, 0);
+	write32(PSB_DSPCCNTR, control);
+	/* 평면 레지스터는 주소 레지스터를 써야 반영된다. 이 세대는 SURF 가
+	   아니라 LINOFF 가 주소다 - SURF 에 쓴 값은 되읽히지 않는다. */
+	write32(PSB_DSPCLINOFF, sShared->sprite_offset + offset);
+	(void)read32(PSB_DSPCLINOFF);
+	sSpriteVisible = true;
+	return B_OK;
+}
+
+
 void*
 get_accelerant_hook(uint32 feature, void* data)
 {
@@ -598,6 +839,25 @@ get_accelerant_hook(uint32 feature, void* data)
 			return (void*)poulsbo_fill_rectangle;
 		case B_INVERT_RECTANGLE:
 			return (void*)poulsbo_invert_rectangle;
+
+		case B_OVERLAY_COUNT:
+			return (void*)poulsbo_overlay_count;
+		case B_OVERLAY_SUPPORTED_SPACES:
+			return (void*)poulsbo_overlay_supported_spaces;
+		case B_OVERLAY_SUPPORTED_FEATURES:
+			return (void*)poulsbo_overlay_supported_features;
+		case B_ALLOCATE_OVERLAY_BUFFER:
+			return (void*)poulsbo_allocate_overlay_buffer;
+		case B_RELEASE_OVERLAY_BUFFER:
+			return (void*)poulsbo_release_overlay_buffer;
+		case B_GET_OVERLAY_CONSTRAINTS:
+			return (void*)poulsbo_get_overlay_constraints;
+		case B_ALLOCATE_OVERLAY:
+			return (void*)poulsbo_allocate_overlay;
+		case B_RELEASE_OVERLAY:
+			return (void*)poulsbo_release_overlay;
+		case B_CONFIGURE_OVERLAY:
+			return (void*)poulsbo_configure_overlay;
 	}
 	return NULL;
 }
