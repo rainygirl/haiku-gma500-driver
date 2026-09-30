@@ -98,7 +98,7 @@ main(int argc, char** argv)
 	msg[4] = 0x1234;			/* fence */
 	msg[5] = 0;					/* operating mode */
 	msg[6] = 0;					/* first MB / last MB */
-	msg[7] = FW_VA_RENDER_HOST_INT | FW_VA_RENDER_IS_VLD_NOT_MC;
+	msg[7] = FW_DXVA_RENDER_HOST_INT | FW_DXVA_RENDER_IS_VLD_NOT_MC;
 	for (i = 0; i < 8; i++)
 		printf("msg word %d: %08lx\n", i, (unsigned long)msg[i]);
 

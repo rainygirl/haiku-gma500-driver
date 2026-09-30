@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2011 Intel Corporation. All Rights Reserved.
- * Copyright (c) Imagination Technologies Limited, UK
+ * Copyright (c) 2007 Intel Corporation. All Rights Reserved.
+ * Copyright (c) Imagination Technologies Limited, UK  
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the
@@ -9,11 +9,11 @@
  * distribute, sub license, and/or sell copies of the Software, and to
  * permit persons to whom the Software is furnished to do so, subject to
  * the following conditions:
- *
+ * 
  * The above copyright notice and this permission notice (including the
  * next paragraph) shall be included in all copies or substantial portions
  * of the Software.
- *
+ * 
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
  * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
  * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
@@ -23,52 +23,53 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-
-/*!
+/*! 
 ******************************************************************************
  @file   : mem_io.h
 
- @brief         Memory structure access macros.
+ @brief		Memory structure access macros.
 
- @date          12/09/05
+ @Author	Ray Livesley
 
+ @date		12/09/05
+ 
  <b>Description:</b>\n
 
  This file contains a set of memory access macros for accessing packed memory
  structures.
 
  <b>Platform:</b>\n
- Platform Independent
+ Platform Independent 
 
- @Version       1.0
+ @Version	1.0 
 
 ******************************************************************************/
 
-/*
+/* 
 ******************************************************************************
  Modifications :-
 
  $Log: mem_io.h $
 
-  --- Revision Logs Removed ---
+  --- Revision Logs Removed --- 
 
-  --- Revision Logs Removed ---
+  --- Revision Logs Removed --- 
 
-  --- Revision Logs Removed ---
+  --- Revision Logs Removed --- 
 
-  --- Revision Logs Removed ---
+  --- Revision Logs Removed --- 
 
-  --- Revision Logs Removed ---
+  --- Revision Logs Removed --- 
 
-  --- Revision Logs Removed ---
+  --- Revision Logs Removed --- 
 
-  --- Revision Logs Removed ---
+  --- Revision Logs Removed --- 
 
-  --- Revision Logs Removed ---
+  --- Revision Logs Removed --- 
 
-  --- Revision Logs Removed ---
+  --- Revision Logs Removed --- 
 
-  --- Revision Logs Removed ---
+  --- Revision Logs Removed --- 
 
 
 *****************************************************************************/
@@ -83,181 +84,181 @@ extern "C" {
 #include "img_types.h"
 
 #ifdef DOXYGEN_WILL_SEE_THIS
-    /*!
-    ******************************************************************************
+/*!
+******************************************************************************
 
-     @Function  MEMIO_READ_FIELD
+ @Function	MEMIO_READ_FIELD
+ 
+ @Description 
 
-     @Description
+ This macro is used to extract a field from a packed memory based structure.
 
-     This macro is used to extract a field from a packed memory based structure.
+ @Input		vpMem: 		A pointer to the memory structure.
 
-     @Input             vpMem:          A pointer to the memory structure.
+ @Input		field: 		The name of the field to be extracted.
+  
+ @Return	IMG_UINT32:	The value of the field - right aligned.
 
-     @Input             field:          The name of the field to be extracted.
+******************************************************************************/
+IMG_UINT32 MEMIO_READ_FIELD(IMG_VOID *	vpMem, field);
 
-     @Return    IMG_UINT32:     The value of the field - right aligned.
+/*!
+******************************************************************************
 
-    ******************************************************************************/
-    IMG_UINT32 MEMIO_READ_FIELD(IMG_VOID *      vpMem, field);
+ @Function	MEMIO_READ_TABLE_FIELD
+ 
+ @Description 
 
-    /*!
-    ******************************************************************************
+ This macro is used to extract the value of a field in a table in a packed 
+ memory based structure.
 
-     @Function  MEMIO_READ_TABLE_FIELD
+ @Input		vpMem: 		A pointer to the memory structure.
 
-     @Description
+ @Input		field: 		The name of the field to be extracted.
 
-     This macro is used to extract the value of a field in a table in a packed
-     memory based structure.
+ @Input		ui32TabIndex: 		The table index of the field to be extracted.
+  
+ @Return	IMG_UINT32:	The value of the field - right aligned.
 
-     @Input             vpMem:          A pointer to the memory structure.
+******************************************************************************/
+IMG_UINT32 MEMIO_READ_TABLE_FIELD(IMG_VOID *	vpMem, field, IMG_UINT32 ui32TabIndex);
 
-     @Input             field:          The name of the field to be extracted.
+/*!
+******************************************************************************
 
-     @Input             ui32TabIndex:           The table index of the field to be extracted.
+ @Function	MEMIO_READ_REPEATED_FIELD
+ 
+ @Description 
 
-     @Return    IMG_UINT32:     The value of the field - right aligned.
+ This macro is used to extract the value of a repeated field in a packed 
+ memory based structure.
 
-    ******************************************************************************/
-    IMG_UINT32 MEMIO_READ_TABLE_FIELD(IMG_VOID *        vpMem, field, IMG_UINT32 ui32TabIndex);
+ @Input		vpMem: 		A pointer to the memory structure.
 
-    /*!
-    ******************************************************************************
+ @Input		field: 		The name of the field to be extracted.
 
-     @Function  MEMIO_READ_REPEATED_FIELD
+ @Input		ui32RepIndex: 		The repeat index of the field to be extracted.
+  
+ @Return	IMG_UINT32:	The value of the field - right aligned.
 
-     @Description
+******************************************************************************/
+IMG_UINT32 MEMIO_READ_REPEATED_FIELD(IMG_VOID *	vpMem, field, IMG_UINT32 ui32RepIndex);
 
-     This macro is used to extract the value of a repeated field in a packed
-     memory based structure.
+/*!
+******************************************************************************
 
-     @Input             vpMem:          A pointer to the memory structure.
+ @Function	MEMIO_READ_TABLE_REPEATED_FIELD
+ 
+ @Description 
 
-     @Input             field:          The name of the field to be extracted.
+ This macro is used to extract the value of a repeated field in a table
+ in a packed memory based structure.
 
-     @Input             ui32RepIndex:           The repeat index of the field to be extracted.
+ @Input		vpMem: 		A pointer to the memory structure.
 
-     @Return    IMG_UINT32:     The value of the field - right aligned.
+ @Input		field: 		The name of the field to be extracted.
 
-    ******************************************************************************/
-    IMG_UINT32 MEMIO_READ_REPEATED_FIELD(IMG_VOID *     vpMem, field, IMG_UINT32 ui32RepIndex);
+ @Input		ui32TabIndex: 		The table index of the field to be extracted.
 
-    /*!
-    ******************************************************************************
+ @Input		ui32RepIndex: 		The repeat index of the field to be extracted.
+  
+ @Return	IMG_UINT32:	The value of the field - right aligned.
 
-     @Function  MEMIO_READ_TABLE_REPEATED_FIELD
+******************************************************************************/
+IMG_UINT32 MEMIO_READ_TABLE_REPEATED_FIELD(IMG_VOID *	vpMem, field,IMG_UINT32 ui32TabIndex, IMG_UINT32 ui32RepIndex);
 
-     @Description
+/*!
+******************************************************************************
 
-     This macro is used to extract the value of a repeated field in a table
-     in a packed memory based structure.
+ @Function	MEMIO_WRITE_FIELD
+ 
+ @Description 
 
-     @Input             vpMem:          A pointer to the memory structure.
+ This macro is used to update the value of a field in a packed memory based 
+ structure.
 
-     @Input             field:          The name of the field to be extracted.
+ @Input		vpMem: 		A pointer to the memory structure.
 
-     @Input             ui32TabIndex:           The table index of the field to be extracted.
+ @Input		field: 		The name of the field to be updated.
 
-     @Input             ui32RepIndex:           The repeat index of the field to be extracted.
+ @Input		ui32Value: 	The value to be writtem to the field - right aligned.
+  
+ @Return	None.
 
-     @Return    IMG_UINT32:     The value of the field - right aligned.
+******************************************************************************/
+IMG_VOID MEMIO_WRITE_FIELD(IMG_VOID *	vpMem, field, IMG_UINT32	ui32Value);
 
-    ******************************************************************************/
-    IMG_UINT32 MEMIO_READ_TABLE_REPEATED_FIELD(IMG_VOID *       vpMem, field, IMG_UINT32 ui32TabIndex, IMG_UINT32 ui32RepIndex);
+/*!
+******************************************************************************
 
-    /*!
-    ******************************************************************************
+ @Function	MEMIO_WRITE_TABLE_FIELD
+ 
+ @Description 
 
-     @Function  MEMIO_WRITE_FIELD
+ This macro is used to update the field in a table in a packed memory 
+ based structure.
 
-     @Description
+ @Input		vpMem: 		A pointer to the memory structure.
 
-     This macro is used to update the value of a field in a packed memory based
-     structure.
+ @Input		field: 		The name of the field to be updated.
+ 
+ @Input		ui32TabIndex: 		The table index of the field to be updated.
 
-     @Input             vpMem:          A pointer to the memory structure.
+ @Input		ui32Value: 	The value to be writtem to the field - right aligned.
+ 
+ @Return	None.
 
-     @Input             field:          The name of the field to be updated.
+******************************************************************************/
+IMG_VOID MEMIO_WRITE_TABLE_FIELD(IMG_VOID *	vpMem, field, IMG_UINT32 ui32TabIndex, IMG_UINT32	ui32Value);
 
-     @Input             ui32Value:      The value to be writtem to the field - right aligned.
+/*!
+******************************************************************************
 
-     @Return    None.
+ @Function	MEMIO_WRITE_REPEATED_FIELD
+ 
+ @Description 
 
-    ******************************************************************************/
-    IMG_VOID MEMIO_WRITE_FIELD(IMG_VOID *       vpMem, field, IMG_UINT32        ui32Value);
+ This macro is used to update a repeated field in a packed memory 
+ based structure.
 
-    /*!
-    ******************************************************************************
+ @Input		vpMem: 		A pointer to the memory structure.
 
-     @Function  MEMIO_WRITE_TABLE_FIELD
+ @Input		field: 		The name of the field to be updated.
+ 
+ @Input		ui32RepIndex: 		The repeat index of the field to be updated.
+ 
+ @Input		ui32Value: 	The value to be writtem to the field - right aligned.
 
-     @Description
+ @Return	None.
 
-     This macro is used to update the field in a table in a packed memory
-     based structure.
+******************************************************************************/
+IMG_VOID MEMIO_WRITE_REPEATED_FIELD(IMG_VOID *	vpMem, field, IMG_UINT32 ui32RepIndex, IMG_UINT32	ui32Value);
 
-     @Input             vpMem:          A pointer to the memory structure.
 
-     @Input             field:          The name of the field to be updated.
+/*!
+******************************************************************************
 
-     @Input             ui32TabIndex:           The table index of the field to be updated.
+ @Function	MEMIO_WRITE_TABLE_REPEATED_FIELD
+ 
+ @Description 
 
-     @Input             ui32Value:      The value to be writtem to the field - right aligned.
+ This macro is used to update a repeated field in a table in a packed memory 
+ based structure.
 
-     @Return    None.
+ @Input		vpMem: 		A pointer to the memory structure.
 
-    ******************************************************************************/
-    IMG_VOID MEMIO_WRITE_TABLE_FIELD(IMG_VOID * vpMem, field, IMG_UINT32 ui32TabIndex, IMG_UINT32       ui32Value);
+ @Input		field: 		The name of the field to be updated.
+ 
+ @Input		ui32TabIndex: 		The table index of the field to be updated.
+ 
+ @Input		ui32RepIndex: 		The repeat index of the field to be updated.
+ 
+ @Input		ui32Value: 	The value to be writtem to the field - right aligned.
 
-    /*!
-    ******************************************************************************
+ @Return	None.
 
-     @Function  MEMIO_WRITE_REPEATED_FIELD
-
-     @Description
-
-     This macro is used to update a repeated field in a packed memory
-     based structure.
-
-     @Input             vpMem:          A pointer to the memory structure.
-
-     @Input             field:          The name of the field to be updated.
-
-     @Input             ui32RepIndex:           The repeat index of the field to be updated.
-
-     @Input             ui32Value:      The value to be writtem to the field - right aligned.
-
-     @Return    None.
-
-    ******************************************************************************/
-    IMG_VOID MEMIO_WRITE_REPEATED_FIELD(IMG_VOID *      vpMem, field, IMG_UINT32 ui32RepIndex, IMG_UINT32       ui32Value);
-
-
-    /*!
-    ******************************************************************************
-
-     @Function  MEMIO_WRITE_TABLE_REPEATED_FIELD
-
-     @Description
-
-     This macro is used to update a repeated field in a table in a packed memory
-     based structure.
-
-     @Input             vpMem:          A pointer to the memory structure.
-
-     @Input             field:          The name of the field to be updated.
-
-     @Input             ui32TabIndex:           The table index of the field to be updated.
-
-     @Input             ui32RepIndex:           The repeat index of the field to be updated.
-
-     @Input             ui32Value:      The value to be writtem to the field - right aligned.
-
-     @Return    None.
-
-    ******************************************************************************/
-    IMG_VOID MEMIO_WRITE_TABLE_REPEATED_FIELD(IMG_VOID *        vpMem, field, IMG_UINT32 ui32TabIndex, IMG_UINT32 ui32RepIndex, IMG_UINT32      ui32Value);
+******************************************************************************/
+IMG_VOID MEMIO_WRITE_TABLE_REPEATED_FIELD(IMG_VOID *	vpMem, field, IMG_UINT32 ui32TabIndex, IMG_UINT32 ui32RepIndex, IMG_UINT32	ui32Value);
 
 #else
 
@@ -265,34 +266,34 @@ extern "C" {
 #define MEMIO_CHECK_ALIGNMENT(vpMem)
 
 #else
-#define MEMIO_CHECK_ALIGNMENT(vpMem)            \
-        IMG_ASSERT(((IMG_LONG)vpMem & 0x3) == 0)
+#define MEMIO_CHECK_ALIGNMENT(vpMem)		\
+	IMG_ASSERT(((IMG_UINT32)vpMem & 0x3) == 0)
 #endif
 
-    /*!
-    ******************************************************************************
+/*!
+******************************************************************************
 
-     @Function  MEMIO_READ_FIELD
+ @Function	MEMIO_READ_FIELD
 
-    ******************************************************************************/
+******************************************************************************/
 
 
 #if defined __RELEASE_DEBUG__
 
-#define MEMIO_READ_FIELD(vpMem, field)                                                                                                                                                          \
-        ( MEMIO_CHECK_ALIGNMENT(vpMem),                                                                                                                                                                 \
-        ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET))) & field##_MASK) >> field##_SHIFT)) )
+#define MEMIO_READ_FIELD(vpMem, field)																				\
+	( MEMIO_CHECK_ALIGNMENT(vpMem),																					\
+	((IMG_UINT32)(((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) & field##_MASK) >> field##_SHIFT)) )	
 
 #else
 
 #if 1
-#define MEMIO_READ_FIELD(vpMem, field)                                                                                                                                                              \
-            ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET))) & field##_MASK) >> field##_SHIFT))
+    #define MEMIO_READ_FIELD(vpMem, field)																				    \
+	    ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) & field##_MASK) >> field##_SHIFT))   	
 
 #else
 
-#define MEMIO_READ_FIELD(vpMem, field)                                                                                                                                                              \
-            ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) >> field##_SHIFT) & field##_LSBMASK) )
+    #define MEMIO_READ_FIELD(vpMem, field)																				    \
+	    ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) >> field##_SHIFT) & field##_LSBMASK) )   	
 
 #endif
 
@@ -300,115 +301,115 @@ extern "C" {
 
 
 
-    /*!
-    ******************************************************************************
+/*!
+******************************************************************************
 
-     @Function  MEMIO_READ_TABLE_FIELD
+ @Function	MEMIO_READ_TABLE_FIELD
 
-    ******************************************************************************/
+******************************************************************************/
 #if defined __RELEASE_DEBUG__
 
-#define MEMIO_READ_TABLE_FIELD(vpMem, field, ui32TabIndex)                                                                                                                                                                                              \
-        ( MEMIO_CHECK_ALIGNMENT(vpMem), IMG_ASSERT((ui32TabIndex < field##_NO_ENTRIES) || (field##_NO_ENTRIES == 0)),                                                                           \
-        ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET + (field##_STRIDE * ui32TabIndex)))) & field##_MASK) >> field##_SHIFT)) )       \
+#define MEMIO_READ_TABLE_FIELD(vpMem, field, ui32TabIndex)																								\
+	( MEMIO_CHECK_ALIGNMENT(vpMem), IMG_ASSERT((ui32TabIndex < field##_NO_ENTRIES) || (field##_NO_ENTRIES == 0)),										\
+	((IMG_UINT32)(((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET + (field##_STRIDE * ui32TabIndex)))) & field##_MASK) >> field##_SHIFT)) )	\
 
 #else
 
-#define MEMIO_READ_TABLE_FIELD(vpMem, field, ui32TabIndex)                                                                                                                                                                                              \
-        ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET + (field##_STRIDE * ui32TabIndex)))) & field##_MASK) >> field##_SHIFT))         \
+#define MEMIO_READ_TABLE_FIELD(vpMem, field, ui32TabIndex)																								\
+	((IMG_UINT32)(((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET + (field##_STRIDE * ui32TabIndex)))) & field##_MASK) >> field##_SHIFT)) 	\
 
 #endif
 
 
-    /*!
-    ******************************************************************************
+/*!
+******************************************************************************
 
-     @Function  MEMIO_READ_REPEATED_FIELD
+ @Function	MEMIO_READ_REPEATED_FIELD
 
-    ******************************************************************************/
+******************************************************************************/
 #if defined __RELEASE_DEBUG__
 
-#define MEMIO_READ_REPEATED_FIELD(vpMem, field, ui32RepIndex)                                                                                                                                                                                                                                                           \
-        ( MEMIO_CHECK_ALIGNMENT(vpMem), IMG_ASSERT(ui32RepIndex < field##_NO_REPS),                                                                                                                                                                                                                     \
-        ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET))) & (field##_MASK >> (ui32RepIndex * field##_SIZE))) >> (field##_SHIFT - (ui32RepIndex * field##_SIZE)))) )    \
+#define MEMIO_READ_REPEATED_FIELD(vpMem, field, ui32RepIndex)																																\
+	( MEMIO_CHECK_ALIGNMENT(vpMem),	IMG_ASSERT(ui32RepIndex < field##_NO_REPS),																											\
+	((IMG_UINT32)(((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) & (field##_MASK >> (ui32RepIndex * field##_SIZE))) >> (field##_SHIFT - (ui32RepIndex * field##_SIZE)))) )	\
 
 #else
 
-#define MEMIO_READ_REPEATED_FIELD(vpMem, field, ui32RepIndex)                                                                                                                                                                                                                                                           \
-        ( (IMG_UINT32)(((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET))) & (field##_MASK >> (ui32RepIndex * field##_SIZE))) >> (field##_SHIFT - (ui32RepIndex * field##_SIZE))) )    \
+#define MEMIO_READ_REPEATED_FIELD(vpMem, field, ui32RepIndex)																																\
+	( (IMG_UINT32)(((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) & (field##_MASK >> (ui32RepIndex * field##_SIZE))) >> (field##_SHIFT - (ui32RepIndex * field##_SIZE))) )	\
 
 #endif
-    /*!
-    ******************************************************************************
+/*!
+******************************************************************************
 
-     @Function  MEMIO_READ_TABLE_REPEATED_FIELD
+ @Function	MEMIO_READ_TABLE_REPEATED_FIELD
 
-    ******************************************************************************/
+******************************************************************************/
 #if defined __RELEASE_DEBUG__
 
-#define MEMIO_READ_TABLE_REPEATED_FIELD(vpMem, field, ui32TabIndex, ui32RepIndex)                                                                                                                                                                                                                                                                               \
+#define MEMIO_READ_TABLE_REPEATED_FIELD(vpMem, field, ui32TabIndex, ui32RepIndex)																																		\
     ( MEMIO_CHECK_ALIGNMENT(vpMem), IMG_ASSERT((ui32TabIndex < field##_NO_ENTRIES) || (field##_NO_ENTRIES == 0)), IMG_ASSERT(ui32RepIndex < field##_NO_REPS), \
-    ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET + (field##_STRIDE * ui32TabIndex)))) & (field##_MASK >> (ui32RepIndex * field##_SIZE))) >> (field##_SHIFT - (ui32RepIndex * field##_SIZE)))) )      \
+    ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET + (field##_STRIDE * ui32TabIndex)))) & (field##_MASK >> (ui32RepIndex * field##_SIZE))) >> (field##_SHIFT - (ui32RepIndex * field##_SIZE)))) )	\
 
 #else
 
-#define MEMIO_READ_TABLE_REPEATED_FIELD(vpMem, field, ui32TabIndex, ui32RepIndex)                                                                                                                                                                                                                                                                               \
-    ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET + (field##_STRIDE * ui32TabIndex)))) & (field##_MASK >> (ui32RepIndex * field##_SIZE))) >> (field##_SHIFT - (ui32RepIndex * field##_SIZE))))        \
+#define MEMIO_READ_TABLE_REPEATED_FIELD(vpMem, field, ui32TabIndex, ui32RepIndex)																																		\
+    ((IMG_UINT32)(((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET + (field##_STRIDE * ui32TabIndex)))) & (field##_MASK >> (ui32RepIndex * field##_SIZE))) >> (field##_SHIFT - (ui32RepIndex * field##_SIZE))))	\
 
 #endif
 
-    /*!
-    ******************************************************************************
+/*!
+******************************************************************************
 
-     @Function  MEMIO_WRITE_FIELD
+ @Function	MEMIO_WRITE_FIELD
+ 
+******************************************************************************/
+#define MEMIO_WRITE_FIELD(vpMem, field, ui32Value)														\
+	MEMIO_CHECK_ALIGNMENT(vpMem);																		\
+	(*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) =										\
+	((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) & (field##_TYPE)~field##_MASK) |		\
+		(field##_TYPE)(( (IMG_UINT32) (ui32Value) << field##_SHIFT) & field##_MASK);
 
-    ******************************************************************************/
-#define MEMIO_WRITE_FIELD(vpMem, field, ui32Value)                                                                                                              \
-        MEMIO_CHECK_ALIGNMENT(vpMem);                                                                                                                                           \
-        (*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET))) =                                                                           \
-        ((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET))) & (field##_TYPE)~field##_MASK) |           \
-                (field##_TYPE)(( (IMG_LONG) (ui32Value) << field##_SHIFT) & field##_MASK);
+#define MEMIO_WRITE_FIELD_LITE(vpMem, field, ui32Value)													\
+	MEMIO_CHECK_ALIGNMENT(vpMem);																		\
+	 (*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) =										\
+	((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) |		                                \
+		(field##_TYPE) (( (IMG_UINT32) (ui32Value) << field##_SHIFT)) );
 
-#define MEMIO_WRITE_FIELD_LITE(vpMem, field, ui32Value)                                                                                                 \
-        MEMIO_CHECK_ALIGNMENT(vpMem);                                                                                                                                           \
-         (*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET))) =                                                                          \
-        ((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET))) |                                          \
-                (field##_TYPE) (( (IMG_UINT32) (ui32Value) << field##_SHIFT)) );
+/*!
+******************************************************************************
 
-    /*!
-    ******************************************************************************
+ @Function	MEMIO_WRITE_TABLE_FIELD
+******************************************************************************/
+#define MEMIO_WRITE_TABLE_FIELD(vpMem, field, ui32TabIndex, ui32Value)																		\
+	MEMIO_CHECK_ALIGNMENT(vpMem); IMG_ASSERT(((ui32TabIndex) < field##_NO_ENTRIES) || (field##_NO_ENTRIES == 0));							\
+	(*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET + (field##_STRIDE * (ui32TabIndex))))) =										\
+		((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET + (field##_STRIDE * (ui32TabIndex))))) & (field##_TYPE)~field##_MASK) |	\
+		(field##_TYPE)(( (IMG_UINT32) (ui32Value) << field##_SHIFT) & field##_MASK);
 
-     @Function  MEMIO_WRITE_TABLE_FIELD
-    ******************************************************************************/
-#define MEMIO_WRITE_TABLE_FIELD(vpMem, field, ui32TabIndex, ui32Value)                                                                                                                                          \
-        MEMIO_CHECK_ALIGNMENT(vpMem); IMG_ASSERT(((ui32TabIndex) < field##_NO_ENTRIES) || (field##_NO_ENTRIES == 0));                                                   \
-        (*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET + (field##_STRIDE * (ui32TabIndex))))) =                                                                               \
-                ((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET + (field##_STRIDE * (ui32TabIndex))))) & (field##_TYPE)~field##_MASK) |       \
-                (field##_TYPE)(( (IMG_UINT32) (ui32Value) << field##_SHIFT) & field##_MASK);
+/*!
+******************************************************************************
 
-    /*!
-    ******************************************************************************
+ @Function	MEMIO_WRITE_REPEATED_FIELD
 
-     @Function  MEMIO_WRITE_REPEATED_FIELD
+******************************************************************************/
+#define MEMIO_WRITE_REPEATED_FIELD(vpMem, field, ui32RepIndex, ui32Value)																	\
+	MEMIO_CHECK_ALIGNMENT(vpMem); IMG_ASSERT((ui32RepIndex) < field##_NO_REPS);																\
+	(*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) =																			\
+	((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET))) & (field##_TYPE)~(field##_MASK >> ((ui32RepIndex) * field##_SIZE)) |			\
+		(field##_TYPE)(( (IMG_UINT32) (ui32Value) << (field##_SHIFT - ((ui32RepIndex) * field##_SIZE))) & (field##_MASK >> ((ui32RepIndex) * field##_SIZE))));
 
-    ******************************************************************************/
-#define MEMIO_WRITE_REPEATED_FIELD(vpMem, field, ui32RepIndex, ui32Value)                                                                                                                                       \
-        MEMIO_CHECK_ALIGNMENT(vpMem); IMG_ASSERT((ui32RepIndex) < field##_NO_REPS);                                                                                                                             \
-        (*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET))) =                                                                                                                                                   \
-        ((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET))) & (field##_TYPE)~(field##_MASK >> ((ui32RepIndex) * field##_SIZE)) |                       \
-                (field##_TYPE)(( (IMG_UINT32) (ui32Value) << (field##_SHIFT - ((ui32RepIndex) * field##_SIZE))) & (field##_MASK >> ((ui32RepIndex) * field##_SIZE))));
+/*!
+******************************************************************************
 
-    /*!
-    ******************************************************************************
+ @Function	MEMIO_WRITE_TABLE_REPEATED_FIELD
 
-     @Function  MEMIO_WRITE_TABLE_REPEATED_FIELD
-
-    ******************************************************************************/
-#define MEMIO_WRITE_TABLE_REPEATED_FIELD(vpMem, field, ui32TabIndex, ui32RepIndex, ui32Value)                                                                                                                                                                           \
-        MEMIO_CHECK_ALIGNMENT(vpMem); IMG_ASSERT(((ui32TabIndex) < field##_NO_ENTRIES) || (field##_NO_ENTRIES == 0)); IMG_ASSERT((ui32RepIndex) < field##_NO_REPS);                                             \
-        (*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET + (field##_STRIDE * (ui32TabIndex))))) =                                                                                                                                                               \
-                ((*((field##_TYPE *)(((IMG_LONG)vpMem) + field##_OFFSET + (field##_STRIDE * (ui32TabIndex))))) & (field##_TYPE)~(field##_MASK >> ((ui32RepIndex) * field##_SIZE))) |          \
-                (field##_TYPE)(( (IMG_UINT32) (ui32Value) << (field##_SHIFT - ((ui32RepIndex) * field##_SIZE))) & (field##_MASK >> ((ui32RepIndex) * field##_SIZE)));
+******************************************************************************/
+#define MEMIO_WRITE_TABLE_REPEATED_FIELD(vpMem, field, ui32TabIndex, ui32RepIndex, ui32Value)																						\
+	MEMIO_CHECK_ALIGNMENT(vpMem); IMG_ASSERT(((ui32TabIndex) < field##_NO_ENTRIES) || (field##_NO_ENTRIES == 0)); IMG_ASSERT((ui32RepIndex) < field##_NO_REPS);						\
+	(*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET + (field##_STRIDE * (ui32TabIndex))))) =																				\
+		((*((field##_TYPE *)(((IMG_UINT32)vpMem) + field##_OFFSET + (field##_STRIDE * (ui32TabIndex))))) & (field##_TYPE)~(field##_MASK >> ((ui32RepIndex) * field##_SIZE))) |		\
+		(field##_TYPE)(( (IMG_UINT32) (ui32Value) << (field##_SHIFT - ((ui32RepIndex) * field##_SIZE))) & (field##_MASK >> ((ui32RepIndex) * field##_SIZE)));
 
 #endif
 
