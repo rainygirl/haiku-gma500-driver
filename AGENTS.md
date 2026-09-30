@@ -307,6 +307,47 @@ accelerant 는 이 평면으로 오버레이 훅을 구현한다. 드라이버�
 넘기고 앱이 그 영역을 clone 하도록 `overlay_client_data` 와 libbe 를 함께
 고쳐야 한다. 훅은 올바르고 비용이 없으므로 그대로 둔다.
 
+## 하드웨어 커서를 켜면 드래그 비트맵이 사라진다
+
+바탕화면 아이콘을 끌면 포인터만 보이고 아이콘이 보이지 않았다. 드라이버가
+아니라 app_server 의 빈틈이다.
+
+`HWInterface::SetDragBitmap()` 은 드래그 비트맵과 커서를
+`CursorAndDragBitmap()` 으로 합성한다. 그런데 그 비트맵은 소프트웨어 커서
+(`_DrawCursor()`)로만 화면에 나가고, `AccelerantHWInterface::_DrawCursor()` 는
+하드웨어 커서가 켜져 있으면 아무것도 하지 않는다. `AccelerantHWInterface` 는
+`SetDragBitmap()` 을 재정의하지 않으므로 하드웨어 커서에는 맨 포인터만 남는다.
+accelerant 는 드래그가 시작됐다는 사실조차 받지 못한다 - 커서 훅이 있는 모든
+accelerant 에서 업스트림도 같다.
+
+고친 곳은 VAIO P 패치(`haiku-sony-vaio-p-patch` 의 `vaio-p-patches.diff`)다.
+드래그 비트맵이 걸리면 소프트웨어 커서로 바꾸고, 풀리면 하드웨어 커서로
+되돌린다. 드래그 중 `SetCursor()` 도 소프트웨어에 머문다. 패치하지 않은
+시스템에 이 드라이버만 설치하면 증상은 그대로다.
+
+합성 비트맵을 커서 평면에 올리는 방법은 쓰지 않았다. 아이콘과 이름을 담은
+드래그 비트맵은 대개 64x64 보다 넓다.
+
+이미지를 다시 굽지 않고 실기기에서 확인했다. 기기에서 app_server 만 네이티브로
+빌드하고(`jam -q app_server`), launch_daemon 설정으로 패키지판 대신 띄웠다:
+
+    ~/config/settings/launch/dragtest-app_server
+    service x-vnd.Haiku-app_server {
+        launch /boot/home/dragtest/app_server
+    }
+
+같은 이름의 잡을 덮어쓰므로 `launch` 경로만 바뀐다. 파일을 지우고 재부팅하면
+원래대로 돌아간다. 아이콘을 끌면 아이콘이 보이고, 소프트웨어 커서로 넘어갔다가
+놓으면 하드웨어 커서로 돌아온다.
+
+시험하며 걸린 것 둘:
+
+- ssh 세션에서는 `LIBRARY_PATH` 가 비어 있다. 빌드가 `:<경로>` 를 붙이면 기본
+  검색 경로가 통째로 사라져 `package extract` 가 메시지 없이 3 으로 끝난다.
+  빌드 전에 `. /boot/system/boot/SetupEnvironment` 를 읽어야 한다.
+- app_server 를 손으로 재시작하면 Tracker 는 죽은 인스턴스에 붙은 채 남아
+  바탕화면이 까매진다. Tracker 도 재시작해야 한다.
+
 ## 실기기에서 확인된 것
 
 Sony VAIO P (VGN-P70H), Haiku R1~beta6+development hrev99002, x86_gcc2:
