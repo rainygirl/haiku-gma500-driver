@@ -375,7 +375,56 @@ Sony VAIO P (VGN-P70H), Haiku R1~beta6+development hrev99002, x86_gcc2:
 `tools/fill2d.c`, `tools/blit2d.c` 로 채우기·복사·겹치는 복사를 보내고,
 프레임버퍼 메모리를 직접 읽어 픽셀 값으로 확인했다.
 
+## 비디오 디코더(VXD370, MSVDX)도 살아 있고, 펌웨어가 돈다
+
+이 칩에는 SGX 와 별개로 H.264 하드웨어 디코더가 있다. Imagination VXD370,
+리눅스 드라이버에서는 MSVDX 라고 부른다. 데이터시트 319537 의 9.2 절과 표 22 는
+H.264(High L4.1 까지), MPEG-2, MPEG-4 SP/ASP, VC-1 을 적고 있다. VP8, VP9, AV1 은
+없고 디코드 전용이다. 레지스터와 명령 형식은 데이터시트에 없다.
+
+레지스터 위치는 인텔 psb 커널 드라이버(psb-kmp, `psb_drv.h`/`psb_msvdx.h`,
+MIT 헤더)에서 왔다. BAR0 + 0x50000, 32 KB.
+
+**읽기만 해서 확인** (`tools/msvdxprobe.c`):
+
+    MSVDX_MTX_RAM_BANK     0a0a0404   RAM 뱅크 구성
+    0x0630                 0303807f   코어 구성
+    MSVDX_MAN_CLK_ENABLE   00000001   코어 클럭 켜짐
+    MSVDX_MMU_CONTROL0     0f000000   MMU 우회
+
+전원이 꺼진 블록이면 0 이나 ffffffff 만 나온다. 이 블록은 BIOS 가 켜 둔 채이고
+아무도 쓰지 않았다. SGX 와 같은 사정이다.
+
+**펌웨어** (`tools/msvdxfw.c`): `psb_setup_fw()` 순서 그대로 MTX 를 리셋하고,
+통신 영역을 지우고, `msvdx_fw.bin`(버전 2, 코드 2841 워드, 데이터 1046 워드)을
+MTX RAM 에 올려 되읽어 검증한 뒤 PC 를 넣고 스레드를 켰다. 펌웨어가 통신 영역
+서명 자리에 `0xA5A5A5A5` 를 썼다. 통신 영역(0x2cc0)은 펌웨어 데이터가 올라가는
+주소 범위 안에 있지만 업로드로 덮이지 않는 별도 메모리다. FW_STATUS 가 이미지 값
+0x04800600 이 아니라 지워 둔 0 그대로였다. 그러니 서명은 펌웨어가 실행되어 쓴
+것이다. 칩 리비전은 06(Poulsbo D1).
+
+펌웨어 파일은 인텔 것이고 라이선스가 "INTEL CONFIDENTIAL, All rights reserved"
+뿐이라 이 저장소에 넣지 않는다. Ubuntu 의 `psb-firmware` 패키지에 있다.
+
+**명령을 만드는 쪽.** Poulsbo 시절 사용자 공간 드라이버 `psb_drv_video.so` 는
+비공개 바이너리였고 역분석이 금지다. 하지만 인텔이 나중에 MIT 로 공개한
+`psb_video` 의 전체 기록이 Android 소스(`platform/hardware/intel/img/psb_video`,
+2010-04 부터 634 커밋)에 남아 있다. 2012-09 이전 트리의 Medfield 가 아닌 경로가
+만드는 32 바이트 렌더 메시지는 Poulsbo 커널 드라이버의 `FW_VA_RENDER` 와 필드
+오프셋이 모두 같다(크기 0, ID 1, 버퍼 크기 2, MMUPTD 4, LLDMA 주소 8, 컨텍스트
+0xC, 펜스 0x10, 동작 모드 0x14, 첫 MB 0x18, 마지막 MB 0x1A, 플래그 0x1C). 메시지
+ID 도 같다(INIT 0x80, RENDER 0x81, CMD_COMPLETED 0xC0). `src/psb_H264.c`,
+`psb_cmdbuf.c` 가 H.264 명령 버퍼를 만든다. 비공개 바이너리 없이 공개 코드로
+명령을 만들 수 있다는 뜻이다. 레지스터 수준 호환은 실제로 한 프레임을 풀어
+보기 전까지는 모른다.
+
+MSVDX 의 MMU 는 SGX 와 같은 2 단 페이지 테이블(4 KB, PTE 유효 비트 0x1)을 쓰고,
+페이지 디렉터리의 물리 주소는 렌더 메시지마다 MMUPTD 필드로 넘긴다.
+
 ## 앞으로
+- **하드웨어 H.264 디코드.** 펌웨어까지 올라간다. 다음은 MMU 페이지 테이블과
+  RENDEC 버퍼를 만들고, 2011 년 `psb_video` 의 `psb_H264.c` 로 명령 버퍼를 만들어
+  I 프레임 하나를 풀고 ffmpeg 결과와 비교하는 것이다.
 
 - **Haiku 의 오버레이 경로 수정.** 스프라이트 평면은 동작하는데 app_server 가
   픽셀 버퍼를 앱에 전달하지 못한다. `overlay_client_data` 에 `area_id` 와
