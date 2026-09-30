@@ -1,11 +1,11 @@
-/* Decode the first IDR picture of an H.264 Annex B file on the GMA500's
- * video decoder and write it out as tightly packed NV12.
+/* Decode an H.264 Annex B file on the GMA500's video decoder and write the
+ * pictures out as tightly packed NV12.
  *
- *   msvdxdec msvdx_fw.bin in.264 out.nv12 [-v]
+ *   msvdxdec msvdx_fw.bin in.264 out.nv12 [-v|-vv]
  *
- * The header parsing here is the minimum for one IDR slice of a progressive
- * stream (SPS, PPS, slice header up to slice_data()); it exists to test the
- * decoder, not to be an H.264 parser. Compare the output against a software
+ * The parsing here is the minimum for a progressive stream of I and P
+ * pictures, one slice each, with one reference frame (the previous one); it
+ * exists to test the decoder, not to be an H.264 parser. Compare the output against a software
  * decode of the same file, e.g.
  *   ffmpeg -i in.264 -frames:v 1 -f rawvideo -pix_fmt nv12 ref.nv12
  */
@@ -156,7 +156,114 @@ parse_pps(bits* b, pps_t* p)
 	p->redundant_pic_cnt_present = u(b, 1);
 }
 
+/* ---- slice header ---------------------------------------------------------- */
+
+typedef struct {
+	int nal_ref_idc, idr, slice_type, frame_num, poc_lsb;
+	int num_ref_l0_minus1;
+	uint32_t data_bit;	/* in the stored bytes, NAL header included */
+} slice_t;
+
+static int
+parse_slice(const uint8_t* nal, uint32_t size, const sps_t* sps,
+	const pps_t* pps, slice_t* sh, VASliceParameterBufferH264* sl)
+{
+	static uint8_t rbsp[1 << 21];
+	static uint32_t ep[1 << 16];
+	int epCount;
+	uint32_t len = to_rbsp(nal + 1, size - 1, rbsp, ep, &epCount);
+	bits b = { rbsp, len, 0 };
+
+	memset(sh, 0, sizeof(*sh));
+	sh->nal_ref_idc = (nal[0] >> 5) & 3;
+	sh->idr = (nal[0] & 0x1f) == 5;
+	sl->first_mb_in_slice = ue(&b);
+	sh->slice_type = ue(&b) % 5;
+	ue(&b);
+	sh->frame_num = u(&b, sps->log2_max_frame_num);
+	if (!sps->frame_mbs_only && u(&b, 1)) {
+		fprintf(stderr, "field pictures are not handled\n");
+		return 1;
+	}
+	if (sh->idr)
+		ue(&b);
+	if (sps->poc_type == 0) {
+		sh->poc_lsb = u(&b, sps->log2_max_poc_lsb);
+		if (pps->bottom_field_pic_order)
+			se(&b);
+	} else if (sps->poc_type == 1 && !sps->delta_pic_order_always_zero) {
+		se(&b);
+		if (pps->bottom_field_pic_order)
+			se(&b);
+	}
+	if (pps->redundant_pic_cnt_present)
+		ue(&b);
+	if (sh->slice_type == 1) {
+		fprintf(stderr, "B slices are not handled\n");
+		return 1;
+	}
+	sh->num_ref_l0_minus1 = pps->num_ref_l0;
+	if (sh->slice_type == 0 || sh->slice_type == 3) {
+		if (u(&b, 1))
+			sh->num_ref_l0_minus1 = ue(&b);
+		if (u(&b, 1)) {	/* ref_pic_list_modification_flag_l0 */
+			uint32_t op;
+			while ((op = ue(&b)) != 3) {
+				ue(&b);
+				(void)op;
+			}
+		}
+		if (pps->weighted_pred) {
+			fprintf(stderr, "weighted prediction is not handled\n");
+			return 1;
+		}
+	}
+	if (sh->nal_ref_idc) {
+		if (sh->idr) {
+			u(&b, 1);
+			u(&b, 1);
+		} else if (u(&b, 1)) {	/* adaptive_ref_pic_marking_mode_flag */
+			uint32_t mmco;
+			while ((mmco = ue(&b)) != 0) {
+				if (mmco == 1 || mmco == 3)
+					ue(&b);
+				if (mmco == 2)
+					ue(&b);
+				if (mmco == 3 || mmco == 6)
+					ue(&b);
+				if (mmco == 4)
+					ue(&b);
+			}
+		}
+	}
+	sl->cabac_init_idc = 0;
+	if (pps->entropy && sh->slice_type != 2 && sh->slice_type != 4)
+		sl->cabac_init_idc = ue(&b);
+	sl->slice_qp_delta = se(&b);
+	sl->disable_deblocking_filter_idc = 0;
+	sl->slice_alpha_c0_offset_div2 = 0;
+	sl->slice_beta_offset_div2 = 0;
+	if (pps->deblock_present) {
+		sl->disable_deblocking_filter_idc = ue(&b);
+		if (sl->disable_deblocking_filter_idc != 1) {
+			sl->slice_alpha_c0_offset_div2 = se(&b);
+			sl->slice_beta_offset_div2 = se(&b);
+		}
+	}
+	if (pps->entropy) {
+		while (b.bit & 7)
+			b.bit++;
+	}
+	sh->data_bit = b.bit + 8;
+	for (int i = 0; i < epCount; i++)
+		if (ep[i] * 8 < b.bit)
+			sh->data_bit += 8;
+	return 0;
+}
+
 /* ---- main ------------------------------------------------------------------- */
+
+#define NUM_SURFACES 2
 
 int
 main(int argc, char** argv)
@@ -164,13 +271,12 @@ main(int argc, char** argv)
 	uint8_t* file;
 	long fileSize;
 	FILE* f;
-	const uint8_t* nal[64];
-	uint32_t nalSize[64];
+	static const uint8_t* nal[1 << 14];
+	static uint32_t nalSize[1 << 14];
 	int nals = 0;
 	sps_t sps;
 	pps_t pps;
 	int haveSps = 0, havePps = 0;
-	int slice = -1;
 
 	if (argc < 4) {
 		fprintf(stderr, "usage: %s msvdx_fw.bin in.264 out.nv12 [-v|-vv]\n",
@@ -190,8 +296,7 @@ main(int argc, char** argv)
 	fread(file, 1, fileSize, f);
 	fclose(f);
 
-	/* Split Annex B */
-	for (long i = 0; i + 3 < fileSize && nals < 64; i++) {
+	for (long i = 0; i + 3 < fileSize && nals < (1 << 14); i++) {
 		if (file[i] == 0 && file[i + 1] == 0 && file[i + 2] == 1) {
 			if (nals > 0)
 				nalSize[nals - 1] = (file + i) - nal[nals - 1]
@@ -203,98 +308,37 @@ main(int argc, char** argv)
 	if (nals > 0)
 		nalSize[nals - 1] = (file + fileSize) - nal[nals - 1];
 
-	static uint8_t rbsp[1 << 20];
-	static uint32_t ep[1 << 16];
-	int epCount;
+	uint32_t maxSlice = 0;
 	for (int n = 0; n < nals; n++) {
+		static uint8_t rbsp[1 << 16];
+		static uint32_t ep[1 << 12];
+		int epCount;
 		int type = nal[n][0] & 0x1f;
-		bits b;
-		uint32_t len = to_rbsp(nal[n] + 1, nalSize[n] - 1, rbsp, ep, &epCount);
-		b.p = rbsp;
-		b.size = len;
-		b.bit = 0;
-		if (type == 7) {
+		if (type == 7 && !haveSps) {
+			bits b = { rbsp, to_rbsp(nal[n] + 1, nalSize[n] - 1, rbsp, ep,
+				&epCount), 0 };
 			parse_sps(&b, &sps);
 			haveSps = 1;
-		} else if (type == 8) {
+		} else if (type == 8 && !havePps) {
+			bits b = { rbsp, to_rbsp(nal[n] + 1, nalSize[n] - 1, rbsp, ep,
+				&epCount), 0 };
 			parse_pps(&b, &pps);
 			havePps = 1;
-		} else if (type == 5 && slice < 0)
-			slice = n;
+		} else if ((type == 1 || type == 5) && nalSize[n] > maxSlice)
+			maxSlice = nalSize[n];
 	}
-	if (!haveSps || !havePps || slice < 0) {
-		fprintf(stderr, "need an SPS, a PPS and an IDR slice\n");
+	if (!haveSps || !havePps) {
+		fprintf(stderr, "need an SPS and a PPS\n");
 		return 1;
 	}
-	printf("SPS: profile %d level %d %dx%d MBs, frame_mbs_only %d, poc type "
-		"%d, refs %d\n", sps.profile_idc, sps.level_idc, sps.width_mbs,
-		sps.height_map_units * (2 - sps.frame_mbs_only), sps.frame_mbs_only,
-		sps.poc_type, sps.num_ref_frames);
-	printf("PPS: %s, qp %d, deblock ctl %d\n", pps.entropy ? "CABAC" : "CAVLC",
-		26 + pps.pic_init_qp_minus26, pps.deblock_present);
+	int width = sps.width_mbs * 16;
+	int height = sps.height_map_units * (2 - sps.frame_mbs_only) * 16;
+	printf("SPS: profile %d level %d, %dx%d, poc type %d, refs %d\n",
+		sps.profile_idc, sps.level_idc, width, height, sps.poc_type,
+		sps.num_ref_frames);
+	printf("PPS: %s, qp %d\n", pps.entropy ? "CABAC" : "CAVLC",
+		26 + pps.pic_init_qp_minus26);
 
-	/* Slice header */
-	VAPictureParameterBufferH264 pic;
-	VASliceParameterBufferH264 sl;
-	VAIQMatrixBufferH264 iq;
-	memset(&pic, 0, sizeof(pic));
-	memset(&sl, 0, sizeof(sl));
-	memset(&iq, 16, sizeof(iq));
-
-	int nalRefIdc = (nal[slice][0] >> 5) & 3;
-	uint32_t len = to_rbsp(nal[slice] + 1, nalSize[slice] - 1, rbsp, ep,
-		&epCount);
-	bits b = { rbsp, len, 0 };
-	sl.first_mb_in_slice = ue(&b);
-	uint32_t sliceType = ue(&b) % 5;
-	ue(&b);	/* pps id */
-	int frameNum = u(&b, sps.log2_max_frame_num);
-	if (!sps.frame_mbs_only && u(&b, 1)) {
-		fprintf(stderr, "field pictures are not handled\n");
-		return 1;
-	}
-	ue(&b);	/* idr_pic_id */
-	if (sps.poc_type == 0) {
-		u(&b, sps.log2_max_poc_lsb);
-		if (pps.bottom_field_pic_order)
-			se(&b);
-	}
-	if (pps.redundant_pic_cnt_present)
-		ue(&b);
-	/* I slice: no ref list modification, no weights. IDR marking: */
-	u(&b, 1);	/* no_output_of_prior_pics_flag */
-	u(&b, 1);	/* long_term_reference_flag */
-	sl.slice_qp_delta = se(&b);
-	if (pps.deblock_present) {
-		sl.disable_deblocking_filter_idc = ue(&b);
-		if (sl.disable_deblocking_filter_idc != 1) {
-			sl.slice_alpha_c0_offset_div2 = se(&b);
-			sl.slice_beta_offset_div2 = se(&b);
-		}
-	}
-	if (pps.entropy) {
-		/* cabac_alignment_one_bit */
-		while (b.bit & 7)
-			b.bit++;
-	}
-	/* The header is parsed in RBSP bits; slice_data_bit_offset counts from
-	 * the start of the NAL unit, header byte included, in the bytes as
-	 * stored. Add back every emulation-prevention byte that precedes it. */
-	uint32_t rbspBits = b.bit;
-	uint32_t rawBits = rbspBits + 8;
-	for (int i = 0; i < epCount; i++)
-		if (ep[i] * 8 < rbspBits)
-			rawBits += 8;
-	printf("slice: type %u, first MB %u, qp delta %d, deblock idc %d, "
-		"data at bit %u of %u bytes\n", sliceType, sl.first_mb_in_slice,
-		sl.slice_qp_delta, sl.disable_deblocking_filter_idc, rawBits,
-		nalSize[slice]);
-	if (sliceType != 2) {
-		fprintf(stderr, "only I slices are handled\n");
-		return 1;
-	}
-
-	/* Hardware */
 	if (msvdx_open(argv[1]) != 0) {
 		fprintf(stderr, "msvdx_open failed\n");
 		return 1;
@@ -302,23 +346,21 @@ main(int argc, char** argv)
 
 	struct psb_driver_data_s driver;
 	memset(&driver, 0, sizeof(driver));
-	struct psb_surface_s surface;
-	struct object_surface_s objSurface;
-	int width = sps.width_mbs * 16;
-	int height = sps.height_map_units * (2 - sps.frame_mbs_only) * 16;
-	if (psb_surface_create(&driver, width, height, &surface)
-			!= VA_STATUS_SUCCESS) {
-		fprintf(stderr, "surface allocation failed\n");
-		msvdx_close();
-		return 1;
+	struct psb_surface_s surface[NUM_SURFACES];
+	struct object_surface_s objSurface[NUM_SURFACES];
+	for (int i = 0; i < NUM_SURFACES; i++) {
+		if (psb_surface_create(&driver, width, height, &surface[i])
+				!= VA_STATUS_SUCCESS) {
+			fprintf(stderr, "surface allocation failed\n");
+			msvdx_close();
+			return 1;
+		}
+		objSurface[i].surface_id = i;
+		objSurface[i].width = width;
+		objSurface[i].height = height;
+		objSurface[i].psb_surface = &surface[i];
+		driver.surface_heap.surfaces[i] = &objSurface[i];
 	}
-	memset(surface.buf.mb.cpu, 0x5a, surface.size);	/* to see what was written */
-	msvdx_flush(&surface.buf.mb, 0, surface.buf.mb.size);
-	objSurface.surface_id = 0;
-	objSurface.width = width;
-	objSurface.height = height;
-	objSurface.psb_surface = &surface;
-	driver.surface_heap.surfaces[0] = &objSurface;
 
 	struct object_config_s config;
 	memset(&config, 0, sizeof(config));
@@ -330,10 +372,8 @@ main(int argc, char** argv)
 	context.driver_data = &driver;
 	context.picture_width = width;
 	context.picture_height = height;
-	context.num_render_targets = 1;
-	context.current_render_target = &objSurface;
+	context.num_render_targets = NUM_SURFACES;
 	context.msvdx_context = 1;
-
 	if (psb_H264_vtable.createContext(&context, &config)
 			!= VA_STATUS_SUCCESS) {
 		fprintf(stderr, "createContext failed\n");
@@ -341,108 +381,166 @@ main(int argc, char** argv)
 		return 1;
 	}
 
-	/* VA parameters */
-	pic.CurrPic.picture_id = 0;
-	pic.CurrPic.frame_idx = frameNum;
-	pic.CurrPic.flags = nalRefIdc ? VA_PICTURE_H264_SHORT_TERM_REFERENCE : 0;
-	for (int i = 0; i < 16; i++) {
-		pic.ReferenceFrames[i].picture_id = 0xffffffff;
-		pic.ReferenceFrames[i].flags = VA_PICTURE_H264_INVALID;
-	}
-	pic.picture_width_in_mbs_minus1 = sps.width_mbs - 1;
-	pic.picture_height_in_mbs_minus1
-		= sps.height_map_units * (2 - sps.frame_mbs_only) - 1;
-	pic.num_ref_frames = 0;	/* an IDR picture references nothing */
-	pic.seq_fields.bits.chroma_format_idc = sps.chroma_format_idc;
-	pic.seq_fields.bits.gaps_in_frame_num_value_allowed_flag = sps.gaps;
-	pic.seq_fields.bits.frame_mbs_only_flag = sps.frame_mbs_only;
-	pic.seq_fields.bits.mb_adaptive_frame_field_flag = sps.mbaff;
-	pic.seq_fields.bits.direct_8x8_inference_flag = sps.direct_8x8;
-	pic.seq_fields.bits.MinLumaBiPredSize8x8 = sps.level_idc >= 31;
-	pic.seq_fields.bits.log2_max_frame_num_minus4 = sps.log2_max_frame_num - 4;
-	pic.seq_fields.bits.pic_order_cnt_type = sps.poc_type;
-	pic.seq_fields.bits.log2_max_pic_order_cnt_lsb_minus4
-		= sps.poc_type == 0 ? sps.log2_max_poc_lsb - 4 : 0;
-	pic.seq_fields.bits.delta_pic_order_always_zero_flag
-		= sps.delta_pic_order_always_zero;
-	pic.num_slice_groups_minus1 = 0;
-	pic.pic_init_qp_minus26 = pps.pic_init_qp_minus26;
-	pic.chroma_qp_index_offset = pps.chroma_qp_index_offset;
-	pic.second_chroma_qp_index_offset = pps.chroma_qp_index_offset;
-	pic.pic_fields.bits.entropy_coding_mode_flag = pps.entropy;
-	pic.pic_fields.bits.weighted_pred_flag = pps.weighted_pred;
-	pic.pic_fields.bits.weighted_bipred_idc = pps.weighted_bipred;
-	pic.pic_fields.bits.constrained_intra_pred_flag = pps.constrained_intra;
-	pic.pic_fields.bits.pic_order_present_flag = pps.bottom_field_pic_order;
-	pic.pic_fields.bits.deblocking_filter_control_present_flag
-		= pps.deblock_present;
-	pic.pic_fields.bits.redundant_pic_cnt_present_flag
-		= pps.redundant_pic_cnt_present;
-	pic.pic_fields.bits.reference_pic_flag = nalRefIdc != 0;
-	pic.frame_num = frameNum;
-
-	sl.slice_data_size = nalSize[slice];
-	sl.slice_data_offset = 0;
-	sl.slice_data_flag = VA_SLICE_DATA_FLAG_ALL;
-	sl.slice_data_bit_offset = rawBits;
-	sl.slice_type = sliceType;
-	for (int i = 0; i < 32; i++) {
-		sl.RefPicList0[i].picture_id = 0xffffffff;
-		sl.RefPicList0[i].flags = VA_PICTURE_H264_INVALID;
-		sl.RefPicList1[i].picture_id = 0xffffffff;
-		sl.RefPicList1[i].flags = VA_PICTURE_H264_INVALID;
-	}
-
-	/* psb_H264 takes ownership of the parameter buffers and frees them. */
-	VAPictureParameterBufferH264* picCopy = malloc(sizeof(pic));
-	VAIQMatrixBufferH264* iqCopy = malloc(sizeof(iq));
-	memcpy(picCopy, &pic, sizeof(pic));
-	memcpy(iqCopy, &iq, sizeof(iq));
-
 	struct psb_buffer_s bitstream;
-	if (psb_buffer_create(&driver, nalSize[slice], psb_bt_cpu_vpu, &bitstream)
+	if (psb_buffer_create(&driver, maxSlice + 64, psb_bt_cpu_vpu, &bitstream)
 			!= VA_STATUS_SUCCESS) {
 		fprintf(stderr, "bitstream allocation failed\n");
 		msvdx_close();
 		return 1;
 	}
-	memcpy(bitstream.mb.cpu, nal[slice], nalSize[slice]);
-	msvdx_flush(&bitstream.mb, 0, bitstream.mb.size);
 
-	struct object_buffer_s bufPic = { VAPictureParameterBufferType, picCopy,
-		sizeof(pic), 1, NULL };
-	struct object_buffer_s bufIq = { VAIQMatrixBufferType, iqCopy,
-		sizeof(iq), 1, NULL };
-	struct object_buffer_s bufSlice = { VASliceParameterBufferType, &sl,
-		sizeof(sl), 1, NULL };
-	struct object_buffer_s bufData = { VASliceDataBufferType, NULL,
-		nalSize[slice], 1, &bitstream };
-	object_buffer_p buffers[] = { &bufPic, &bufIq, &bufSlice, &bufData };
+	FILE* out = fopen(argv[3], "wb");
+	int frames = 0;
+	int failed = 0;
+	int prev = -1;
+	int prevFrameNum = 0;
+	int poc = 0;
+	bigtime_t total = 0;
+	bigtime_t worst = 0;
 
-	bigtime_t start = system_time();
-	VAStatus st = psb_H264_vtable.beginPicture(&context);
-	if (st == VA_STATUS_SUCCESS)
-		st = psb_H264_vtable.renderPicture(&context, buffers, 4);
-	if (st == VA_STATUS_SUCCESS)
-		st = psb_H264_vtable.endPicture(&context);
-	bigtime_t elapsed = system_time() - start;
-	printf("decode: status %d, %lld us\n", st, (long long)elapsed);
-	msvdx_dump_state("after decode");
+	for (int n = 0; n < nals && !failed; n++) {
+		int type = nal[n][0] & 0x1f;
+		if (type != 1 && type != 5)
+			continue;
 
-	/* Write NV12 without the stride */
-	msvdx_flush(&surface.buf.mb, 0, surface.buf.mb.size);
-	f = fopen(argv[3], "wb");
-	for (int y = 0; y < height; y++)
-		fwrite(surface.buf.mb.cpu + y * surface.stride, 1, width, f);
-	for (int y = 0; y < height / 2; y++)
-		fwrite(surface.buf.mb.cpu + surface.chroma_offset
-			+ y * surface.stride, 1, width, f);
-	fclose(f);
-	printf("wrote %dx%d NV12 to %s; first luma bytes: %02x %02x %02x %02x\n",
-		width, height, argv[3], surface.buf.mb.cpu[0], surface.buf.mb.cpu[1],
-		surface.buf.mb.cpu[2], surface.buf.mb.cpu[3]);
+		VAPictureParameterBufferH264* pic = calloc(1, sizeof(*pic));
+		VAIQMatrixBufferH264* iq = malloc(sizeof(*iq));
+		VASliceParameterBufferH264 sl;
+		slice_t sh;
+		memset(&sl, 0, sizeof(sl));
+		memset(iq, 16, sizeof(*iq));
+		if (parse_slice(nal[n], nalSize[n], &sps, &pps, &sh, &sl) != 0)
+			break;
+		if (sl.first_mb_in_slice != 0) {
+			fprintf(stderr, "multiple slices per picture are not handled\n");
+			break;
+		}
+		if (sh.idr)
+			poc = 0;
+		int cur = frames % NUM_SURFACES;
+
+		pic->CurrPic.picture_id = cur;
+		pic->CurrPic.frame_idx = sh.frame_num;
+		pic->CurrPic.flags = sh.nal_ref_idc
+			? VA_PICTURE_H264_SHORT_TERM_REFERENCE : 0;
+		pic->CurrPic.TopFieldOrderCnt = poc;
+		pic->CurrPic.BottomFieldOrderCnt = poc;
+		for (int i = 0; i < 16; i++) {
+			pic->ReferenceFrames[i].picture_id = 0xffffffff;
+			pic->ReferenceFrames[i].flags = VA_PICTURE_H264_INVALID;
+		}
+		for (int i = 0; i < 32; i++) {
+			sl.RefPicList0[i].picture_id = 0xffffffff;
+			sl.RefPicList0[i].flags = VA_PICTURE_H264_INVALID;
+			sl.RefPicList1[i].picture_id = 0xffffffff;
+			sl.RefPicList1[i].flags = VA_PICTURE_H264_INVALID;
+		}
+		if (!sh.idr && prev >= 0) {
+			VAPictureH264 ref;
+			memset(&ref, 0, sizeof(ref));
+			ref.picture_id = prev;
+			ref.frame_idx = prevFrameNum;
+			ref.flags = VA_PICTURE_H264_SHORT_TERM_REFERENCE;
+			ref.TopFieldOrderCnt = poc - 2;
+			ref.BottomFieldOrderCnt = poc - 2;
+			pic->ReferenceFrames[0] = ref;
+			pic->num_ref_frames = 1;
+			sl.RefPicList0[0] = ref;
+		}
+		pic->picture_width_in_mbs_minus1 = sps.width_mbs - 1;
+		pic->picture_height_in_mbs_minus1
+			= sps.height_map_units * (2 - sps.frame_mbs_only) - 1;
+		pic->seq_fields.bits.chroma_format_idc = sps.chroma_format_idc;
+		pic->seq_fields.bits.gaps_in_frame_num_value_allowed_flag = sps.gaps;
+		pic->seq_fields.bits.frame_mbs_only_flag = sps.frame_mbs_only;
+		pic->seq_fields.bits.mb_adaptive_frame_field_flag = sps.mbaff;
+		pic->seq_fields.bits.direct_8x8_inference_flag = sps.direct_8x8;
+		pic->seq_fields.bits.MinLumaBiPredSize8x8 = sps.level_idc >= 31;
+		pic->seq_fields.bits.log2_max_frame_num_minus4
+			= sps.log2_max_frame_num - 4;
+		pic->seq_fields.bits.pic_order_cnt_type = sps.poc_type;
+		pic->seq_fields.bits.log2_max_pic_order_cnt_lsb_minus4
+			= sps.poc_type == 0 ? sps.log2_max_poc_lsb - 4 : 0;
+		pic->seq_fields.bits.delta_pic_order_always_zero_flag
+			= sps.delta_pic_order_always_zero;
+		pic->pic_init_qp_minus26 = pps.pic_init_qp_minus26;
+		pic->chroma_qp_index_offset = pps.chroma_qp_index_offset;
+		pic->second_chroma_qp_index_offset = pps.chroma_qp_index_offset;
+		pic->pic_fields.bits.entropy_coding_mode_flag = pps.entropy;
+		pic->pic_fields.bits.weighted_pred_flag = pps.weighted_pred;
+		pic->pic_fields.bits.weighted_bipred_idc = pps.weighted_bipred;
+		pic->pic_fields.bits.constrained_intra_pred_flag = pps.constrained_intra;
+		pic->pic_fields.bits.pic_order_present_flag = pps.bottom_field_pic_order;
+		pic->pic_fields.bits.deblocking_filter_control_present_flag
+			= pps.deblock_present;
+		pic->pic_fields.bits.redundant_pic_cnt_present_flag
+			= pps.redundant_pic_cnt_present;
+		pic->pic_fields.bits.reference_pic_flag = sh.nal_ref_idc != 0;
+		pic->frame_num = sh.frame_num;
+
+		sl.slice_data_size = nalSize[n];
+		sl.slice_data_offset = 0;
+		sl.slice_data_flag = VA_SLICE_DATA_FLAG_ALL;
+		sl.slice_data_bit_offset = sh.data_bit;
+		sl.slice_type = sh.slice_type;
+		sl.num_ref_idx_l0_active_minus1 = sh.num_ref_l0_minus1;
+
+		memcpy(bitstream.mb.cpu, nal[n], nalSize[n]);
+		msvdx_flush(&bitstream.mb, 0, nalSize[n]);
+
+		struct object_buffer_s bufPic = { VAPictureParameterBufferType, pic,
+			sizeof(*pic), 1, NULL };
+		struct object_buffer_s bufIq = { VAIQMatrixBufferType, iq,
+			sizeof(*iq), 1, NULL };
+		struct object_buffer_s bufSlice = { VASliceParameterBufferType, &sl,
+			sizeof(sl), 1, NULL };
+		struct object_buffer_s bufData = { VASliceDataBufferType, NULL,
+			nalSize[n], 1, &bitstream };
+		object_buffer_p buffers[] = { &bufPic, &bufIq, &bufSlice, &bufData };
+
+		context.current_render_target = &objSurface[cur];
+		bigtime_t start = system_time();
+		VAStatus st = psb_H264_vtable.beginPicture(&context);
+		if (st == VA_STATUS_SUCCESS)
+			st = psb_H264_vtable.renderPicture(&context, buffers, 4);
+		if (st == VA_STATUS_SUCCESS)
+			st = psb_H264_vtable.endPicture(&context);
+		bigtime_t elapsed = system_time() - start;
+		total += elapsed;
+		if (elapsed > worst)
+			worst = elapsed;
+		if (st != VA_STATUS_SUCCESS) {
+			fprintf(stderr, "frame %d (%c, %u bytes): status %d\n", frames,
+				"PBIpi"[sh.slice_type], nalSize[n], st);
+			failed = 1;
+			break;
+		}
+		if (psb_verbose)
+			printf("frame %d: %c %u bytes, %lld us\n", frames,
+				"PBIpi"[sh.slice_type], nalSize[n], (long long)elapsed);
+
+		msvdx_flush(&surface[cur].buf.mb, 0, surface[cur].buf.mb.size);
+		for (int y = 0; y < height; y++)
+			fwrite(surface[cur].buf.mb.cpu + y * surface[cur].stride, 1,
+				width, out);
+		for (int y = 0; y < height / 2; y++)
+			fwrite(surface[cur].buf.mb.cpu + surface[cur].chroma_offset
+				+ y * surface[cur].stride, 1, width, out);
+
+		if (sh.nal_ref_idc) {
+			prev = cur;
+			prevFrameNum = sh.frame_num;
+		}
+		poc += 2;
+		frames++;
+	}
+	fclose(out);
+	printf("decoded %d frames of %dx%d, %lld us total, %lld us per frame "
+		"(%.1f fps), worst %lld us\n", frames, width, height,
+		(long long)total, frames ? (long long)(total / frames) : 0,
+		total ? frames * 1e6 / total : 0.0, (long long)worst);
 
 	psb_H264_vtable.destroyContext(&context);
 	msvdx_close();
-	return st == VA_STATUS_SUCCESS ? 0 : 1;
+	return failed;
 }

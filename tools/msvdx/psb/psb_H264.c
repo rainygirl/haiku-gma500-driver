@@ -725,7 +725,13 @@ static VAStatus psb__H264_process_picture_param(context_H264_p ctx, object_buffe
     ctx->two_pass_mode = ( pic_params->num_slice_groups_minus1 > 0 );
 
     ctx->reg_SPS0 = 0;
-    REGIO_WRITE_FIELD_LITE(ctx->reg_SPS0, MSVDX_VEC_H264, CR_VEC_H264_BE_SPS0, H264_BE_SPS0_DEFAULT_MATRIX_FLAG, ( ctx->profile == H264_BASELINE_PROFILE ) ); /* Always use suplied matrix non baseline otherwise use default*/
+    /* HAIKU: was ( ctx->profile == H264_BASELINE_PROFILE ). The scaling
+     * matrices are uploaded (the SCA chunk) for High profile only, so Main
+     * was told to use a supplied matrix that never reached IQ RAM, and CABAC
+     * Main pictures came out with the right structure and wrong values (7.9
+     * dB against ffmpeg). Only High can carry scaling matrices; every other
+     * profile uses the flat default. */
+    REGIO_WRITE_FIELD_LITE(ctx->reg_SPS0, MSVDX_VEC_H264, CR_VEC_H264_BE_SPS0, H264_BE_SPS0_DEFAULT_MATRIX_FLAG, ( ctx->profile != H264_HIGH_PROFILE ) );
     REGIO_WRITE_FIELD_LITE(ctx->reg_SPS0, MSVDX_VEC_H264, CR_VEC_H264_BE_SPS0, H264_BE_SPS0_2PASS_FLAG,		ctx->two_pass_mode );			/* Always 0 for DXVA - we cant handle otherwise yet */
     /* Assume SGM_8BIT */
     REGIO_WRITE_FIELD_LITE(ctx->reg_SPS0, MSVDX_VEC_H264, CR_VEC_H264_FE_SPS0, H264_FE_SPS0_4BIT_SGM_FLAG,	0);	

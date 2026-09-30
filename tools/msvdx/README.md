@@ -80,3 +80,26 @@ Relocations: `RELOC_SHIFT4` is `(address >> 4)` in the low 28 bits with the
 command in the top four -- the kernel's `psb_apply_reloc()` shifts right by
 the alignment shift and left by nothing, whatever the user-side arithmetic
 suggests.
+
+## I and P pictures, CAVLC and CABAC, 480p (2026-09-30)
+
+`msvdxdec` now decodes a whole stream of I and P pictures (one slice each,
+the previous picture as the only reference) and every picture is compared
+with ffmpeg's decode of the same file:
+
+    clip                              frames  bit-exact  decode per frame
+    Baseline CAVLC 176x144, I/P           30   30 / 30   0.36 ms
+    Main CABAC 176x144, I/P               30   30 / 30   0.37 ms
+    Main CABAC 848x480, 1 Mbit/s, I/P    100  100 / 100  2.39 ms (418 fps)
+
+The one change to `psb_H264.c` this took: it set
+`H264_BE_SPS0_DEFAULT_MATRIX_FLAG` for Baseline only, but uploads the
+scaling matrices (the SCA chunk) for High only, so Main was told to use a
+matrix that never reached IQ RAM. Pictures came out with the right structure
+and wrong values, 7.9 dB against ffmpeg. Only High can carry scaling
+matrices, so every other profile now uses the flat default. The line is
+marked `HAIKU:` in the source.
+
+The decode time is from the first register write to the completion message
+and includes flushing the bitstream out of the CPU cache; it does not
+include copying the picture out.
