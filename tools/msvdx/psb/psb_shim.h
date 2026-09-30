@@ -156,7 +156,7 @@ typedef struct object_config_s {
 	VAConfigAttrib attrib_list[4];
 } *object_config_p;
 
-#define PSB_MAX_SURFACES 20
+#define PSB_MAX_SURFACES 24
 struct object_heap_s {
 	object_surface_p surfaces[PSB_MAX_SURFACES];
 };
@@ -285,6 +285,9 @@ void psb_cmdbuf_lldma_write_bitstream_chained(psb_cmdbuf_p cmdbuf,
 int psb_context_get_next_cmdbuf(object_context_p obj_context);
 int psb_context_submit_cmdbuf(object_context_p obj_context);
 int psb_context_flush_cmdbuf(object_context_p obj_context);
+
+/* Frees the shared command buffer; call before msvdx_close(). */
+void psb_host_shutdown(void);
 
 /* Two-pass deblocking (slice groups) is not supported here. */
 int psb_cmdbuf_second_pass(object_context_p obj_context,

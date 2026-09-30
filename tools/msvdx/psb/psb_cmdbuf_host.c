@@ -157,6 +157,18 @@ psb_cmdbuf_buffer_ref(psb_cmdbuf_p cmdbuf, psb_buffer_p buf)
 
 static psb_cmdbuf_p sCmdbuf;
 
+void
+psb_host_shutdown(void)
+{
+	/* Call before msvdx_close(): the command buffer's decoder mapping goes
+	 * with the page tables. */
+	if (sCmdbuf != NULL) {
+		psb_buffer_destroy(&sCmdbuf->buf);
+		free(sCmdbuf);
+		sCmdbuf = NULL;
+	}
+}
+
 int
 psb_context_get_next_cmdbuf(object_context_p obj_context)
 {

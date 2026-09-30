@@ -85,6 +85,7 @@ struct msvdx_fw {
 };
 
 static volatile uint8* sRegs;
+static area_id sRegsArea = -1;
 static int sPoke = -1;
 static uint8 sRevision;
 
@@ -441,6 +442,7 @@ msvdx_open(const char* firmwarePath)
 	mmio.protection = B_READ_AREA | B_WRITE_AREA;
 	if (ioctl(sPoke, POKE_MAP_MEMORY, &mmio, sizeof(mmio)) < 0)
 		return 1;
+	sRegsArea = mmio.area;
 	sRegs = (volatile uint8*)mmio.address + PSB_MSVDX_OFFSET;
 
 	/* psb_msvdx_reset(): stop whatever an earlier run left going. */
@@ -453,6 +455,7 @@ msvdx_open(const char* firmwarePath)
 	wr(MSVDX_HOST_INT_ENABLE, 0);
 	wr(MSVDX_INT_CLEAR, 0xffffffff);
 
+	sRendecA.area = sRendecB.area = -1;
 	if (mmu_init() != 0) {
 		fprintf(stderr, "msvdx: mmu_init failed\n");
 		return 1;
@@ -487,11 +490,41 @@ msvdx_open(const char* firmwarePath)
 void
 msvdx_close(void)
 {
+	int i;
+
+	if (sRegs == NULL)
+		return;
 	wr(MTX_ENABLE, 0);
 	wr(MSVDX_CONTROL, SOFT_RESET_ALL);
 	wait_for(MSVDX_CONTROL, 0, 0x00000100);
 	wr(MSVDX_MMU_CONTROL0, 0x0f000000);	/* back to bypass, as the BIOS left it */
 	wr(MSVDX_MAN_CLK_ENABLE, 0x01);
+
+	/* Everything the decoder could address goes, so that a later
+	 * msvdx_open() -- a browser opens one per video -- starts clean. */
+	msvdx_free(&sRendecA);
+	msvdx_free(&sRendecB);
+	for (i = 0; i < 1024; i++) {
+		if (sPtArea[i] >= 0)
+			delete_area(sPtArea[i]);
+		sPtArea[i] = -1;
+		sPt[i] = NULL;
+	}
+	if (sPdArea >= 0)
+		delete_area(sPdArea);
+	if (sDummyArea >= 0)
+		delete_area(sDummyArea);
+	sPdArea = sDummyArea = -1;
+	sPd = NULL;
+	sNextDev = DEV_VA_BASE;
+	sPtdInvalidate = 1;
+	if (sRegsArea >= 0)
+		delete_area(sRegsArea);
+	sRegsArea = -1;
+	sRegs = NULL;
+	if (sPoke >= 0)
+		close(sPoke);
+	sPoke = -1;
 }
 
 

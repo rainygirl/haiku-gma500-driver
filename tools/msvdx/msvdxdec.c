@@ -541,6 +541,7 @@ main(int argc, char** argv)
 		total ? frames * 1e6 / total : 0.0, (long long)worst);
 
 	psb_H264_vtable.destroyContext(&context);
+	psb_host_shutdown();
 	msvdx_close();
 	return failed;
 }
